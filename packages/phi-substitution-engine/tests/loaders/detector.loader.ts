@@ -218,7 +218,9 @@ function asArtifactIdentity(value: unknown): DetectorArtifactIdentity {
 // ---------------------------------------------------------------------------
 
 /** SEC-PHASE1-01: DISABLED_PHASE_1 → core must not touch either adapter. */
-async function runDisabled(fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+async function runDisabled(
+  fixture: Readonly<Record<string, unknown>>,
+): Promise<OracleObservation> {
   const counter: DetectCounter = { calls: 0 };
   const primary = makeFakePort({
     descriptor: descriptorFor("phileas-4-gliner"),
@@ -259,7 +261,9 @@ async function runDisabled(fixture: Readonly<Record<string, unknown>>): Promise<
 async function runWireContract(
   fixture: Readonly<Record<string, unknown>>,
 ): Promise<OracleObservation> {
-  const descriptorFixture = isRecord(fixture.descriptor) ? fixture.descriptor : {};
+  const descriptorFixture = isRecord(fixture.descriptor)
+    ? fixture.descriptor
+    : {};
   const descriptor = descriptorFor("phileas-4-gliner", {
     engineVersion: asString(descriptorFixture.engineVersion) ?? "4.2.0",
     modelVersion: asString(descriptorFixture.modelVersion) ?? "gliner-pinned",
@@ -299,7 +303,10 @@ async function runWireContract(
 
   const adapter = new PhileasHttpAdapter({ descriptor }, http, observe);
   const text = asString(fixture.text) ?? "";
-  const spans = await adapter.detect(makeRequest(text), new AbortController().signal);
+  const spans = await adapter.detect(
+    makeRequest(text),
+    new AbortController().signal,
+  );
 
   return {
     ...baseObservation(),
@@ -336,11 +343,19 @@ async function runInvalidOffset(
 ): Promise<OracleObservation> {
   const text = asString(fixture.text) ?? "";
   const normalizer = new Utf16SpanNormalizer();
-  const result = normalizer.normalize(text, DETECTOR_VERSION, asRawSpans(fixture.rawSpans));
+  const result = normalizer.normalize(
+    text,
+    DETECTOR_VERSION,
+    asRawSpans(fixture.rawSpans),
+  );
   if (result.ok) {
     return { ...baseObservation(), providerCalls: 0, errorCode: null };
   }
-  return { ...baseObservation(), providerCalls: 0, errorCode: "INVALID_DETECTOR_OFFSET" };
+  return {
+    ...baseObservation(),
+    providerCalls: 0,
+    errorCode: "INVALID_DETECTOR_OFFSET",
+  };
 }
 
 /** SEC-N4-03 / M-N4-BELT-FAIL-OPEN: required belt outage fails closed. */
@@ -366,7 +381,11 @@ async function runBothUnavailable(
       detectorRequirement: "REQUIRED",
       primary,
       fallback,
-      fallbackEligibility: { eligible: true, residencyApproved: true, baaApproved: true },
+      fallbackEligibility: {
+        eligible: true,
+        residencyApproved: true,
+        baaApproved: true,
+      },
       request: makeRequest(asString(fixture.freeTextCanary) ?? ""),
       deadlineMs: 100,
       runner: new SharedDeadlineDetectorRunner(),
@@ -413,7 +432,11 @@ async function runSharedDeadline(
       detectorRequirement: "REQUIRED",
       primary,
       fallback,
-      fallbackEligibility: { eligible: true, residencyApproved: true, baaApproved: true },
+      fallbackEligibility: {
+        eligible: true,
+        residencyApproved: true,
+        baaApproved: true,
+      },
       request: makeRequest("x"),
       deadlineMs,
       runner: new SharedDeadlineDetectorRunner(),
@@ -489,7 +512,10 @@ async function runAzureFallback(
 
 export function loadDetectorHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       switch (caseId) {
         case "PHASE1-DETECTOR-DISABLED":
           return runDisabled(fixture);

@@ -31,11 +31,16 @@ export function isArtifactPinned(artifact: DetectorArtifactIdentity): boolean {
     artifact.configurationDigest,
     artifact.containerImageDigest,
   ];
-  return identityFields.every((value) => typeof value === "string" && value.length > 0);
+  return identityFields.every(
+    (value) => typeof value === "string" && value.length > 0,
+  );
 }
 
 /** Interactive latency budget derived from L9. */
-const INTERACTIVE_BUDGET = { p95ExclusiveMs: 100, p99InclusiveMs: 100 } as const;
+const INTERACTIVE_BUDGET = {
+  p95ExclusiveMs: 100,
+  p99InclusiveMs: 100,
+} as const;
 
 /**
  * The release claims registry over a full evaluation manifest. The phase-1 copy
@@ -53,7 +58,11 @@ export class EvidenceBoundClaims implements ClaimsEligibility {
     }));
     const gate = gateClasses(classes);
     const latencyOk = envelopeWithinBudget(
-      { p95Ms: manifest.latencyP95Ms, p99Ms: manifest.latencyP99Ms, sampleCount: 0 },
+      {
+        p95Ms: manifest.latencyP95Ms,
+        p99Ms: manifest.latencyP99Ms,
+        sampleCount: 0,
+      },
       INTERACTIVE_BUDGET,
     );
 
@@ -77,15 +86,24 @@ export function perClassFromCounts(input: {
   readonly precisionSuccesses: number;
   readonly precisionTrials: number;
 }): PerClassEvaluation {
-  const recallPoint = input.recallTrials > 0 ? input.recallSuccesses / input.recallTrials : 0;
+  const recallPoint =
+    input.recallTrials > 0 ? input.recallSuccesses / input.recallTrials : 0;
   const precisionPoint =
-    input.precisionTrials > 0 ? input.precisionSuccesses / input.precisionTrials : 0;
+    input.precisionTrials > 0
+      ? input.precisionSuccesses / input.precisionTrials
+      : 0;
   return {
     identifierClass: input.identifierClass,
     recallPoint,
-    recallWilsonLower95: wilsonLowerBound(input.recallSuccesses, input.recallTrials),
+    recallWilsonLower95: wilsonLowerBound(
+      input.recallSuccesses,
+      input.recallTrials,
+    ),
     precisionPoint,
-    precisionWilsonLower95: wilsonLowerBound(input.precisionSuccesses, input.precisionTrials),
+    precisionWilsonLower95: wilsonLowerBound(
+      input.precisionSuccesses,
+      input.precisionTrials,
+    ),
     sampleCount: input.recallTrials,
   };
 }
@@ -100,7 +118,9 @@ export interface EvaluationManifestInput {
 }
 
 /** Assemble a frozen evaluation manifest, pinning the interactive ceiling. */
-export function buildEvaluationManifest(input: EvaluationManifestInput): EvaluationManifest {
+export function buildEvaluationManifest(
+  input: EvaluationManifestInput,
+): EvaluationManifest {
   return {
     engineVersion: input.engineVersion as EngineVersion,
     corpusDigest: input.corpusDigest,

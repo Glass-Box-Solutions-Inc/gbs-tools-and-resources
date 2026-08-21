@@ -39,7 +39,9 @@ export interface NonSubstitutedFieldDefinition {
   readonly rationale: string;
 }
 
-export type ScalarFieldPrivacyClassification = TaggedFieldDefinition | NonSubstitutedFieldDefinition;
+export type ScalarFieldPrivacyClassification =
+  | TaggedFieldDefinition
+  | NonSubstitutedFieldDefinition;
 
 export interface ExtractionSchemaScalarPath {
   readonly schemaPath: string;
@@ -54,11 +56,13 @@ export interface FieldTagProjection {
 }
 
 export interface FieldTagProjector {
-  project(input: Readonly<{
-    schemaVersion: SchemaVersion;
-    scalarPaths: readonly ExtractionSchemaScalarPath[];
-    classifications: readonly ScalarFieldPrivacyClassification[];
-  }>): FieldTagProjection;
+  project(
+    input: Readonly<{
+      schemaVersion: SchemaVersion;
+      scalarPaths: readonly ExtractionSchemaScalarPath[];
+      classifications: readonly ScalarFieldPrivacyClassification[];
+    }>,
+  ): FieldTagProjection;
 }
 
 export interface TaggedValue {
@@ -70,12 +74,14 @@ export interface TaggedValue {
 }
 
 export interface CaseTruthReader {
-  readTaggedValues(key: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    sourceTruthRevision: string;
-  }>): Promise<readonly TaggedValue[]>;
+  readTaggedValues(
+    key: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      sourceTruthRevision: string;
+    }>,
+  ): Promise<readonly TaggedValue[]>;
 }
 
 export type VariantSource = "canonical" | "expanded" | "approved_alias";
@@ -126,40 +132,50 @@ export interface DictionaryCompiler {
 }
 
 export interface CompiledDictionaryCache {
-  get(key: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    engineVersion: EngineVersion;
-    schemaVersion: SchemaVersion;
-  }>): Promise<CompiledDictionary | null>;
+  get(
+    key: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      engineVersion: EngineVersion;
+      schemaVersion: SchemaVersion;
+    }>,
+  ): Promise<CompiledDictionary | null>;
   publish(dictionary: CompiledDictionary): Promise<void>;
-  invalidateMatter(input: Readonly<{ tenantId: TenantId; matterId: MatterId }>): Promise<void>;
+  invalidateMatter(
+    input: Readonly<{ tenantId: TenantId; matterId: MatterId }>,
+  ): Promise<void>;
 }
 
 export interface TokenAssignmentPort {
   /** Stable by tenant+matter+subject+role; sequence numbers are monotonic and never reused. */
-  requireAssignment(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    subjectId: SubjectId;
-    role: TokenRole;
-    dictionaryVersion: DictionaryVersion;
-  }>): Promise<SubstitutionToken>;
+  requireAssignment(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      subjectId: SubjectId;
+      role: TokenRole;
+      dictionaryVersion: DictionaryVersion;
+    }>,
+  ): Promise<SubstitutionToken>;
 }
 
 export interface DictionaryVersionCoordinator {
   /** Participates in the same transaction as a tagged case-truth write. */
-  advanceForCommittedTruthWrite(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    schemaVersion: SchemaVersion;
-    sourceTruthRevision: string;
-  }>): Promise<DictionaryVersion>;
-  requireActiveReady(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-  }>): Promise<DictionaryVersion>;
+  advanceForCommittedTruthWrite(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      schemaVersion: SchemaVersion;
+      sourceTruthRevision: string;
+    }>,
+  ): Promise<DictionaryVersion>;
+  requireActiveReady(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+    }>,
+  ): Promise<DictionaryVersion>;
 }
 
 export interface VariantExpansionContext {
@@ -182,17 +198,26 @@ export interface VariantExpansionResult {
 
 export interface VariantExpander<K extends ExpanderKind = ExpanderKind> {
   readonly kind: K;
-  expand(value: TaggedValue, context: VariantExpansionContext): VariantExpansionResult;
+  expand(
+    value: TaggedValue,
+    context: VariantExpansionContext,
+  ): VariantExpansionResult;
 }
 
 /** Deterministic name forms only; nicknames require `approvedAliases`. */
-export interface PersonNameVariantExpander extends VariantExpander<"person-name"> {}
+export type PersonNameVariantExpander = VariantExpander<"person-name">;
 
 /** Full dates only; an ambiguous numeric date requires a known locale and one interpretation. */
-export interface DateVariantExpander extends VariantExpander<"date"> {}
+export type DateVariantExpander = VariantExpander<"date">;
 
 export interface StructuredIdentifierPolicy {
-  readonly identifierClass: "SSN" | "MRN" | "DEA" | "CLAIM_NUMBER" | "POLICY_NUMBER" | "ACCOUNT_NUMBER";
+  readonly identifierClass:
+    | "SSN"
+    | "MRN"
+    | "DEA"
+    | "CLAIM_NUMBER"
+    | "POLICY_NUMBER"
+    | "ACCOUNT_NUMBER";
   readonly requiredAlphaPrefix: string | null;
   readonly permittedSeparators: readonly ("-" | " " | "/" | ".")[];
   readonly allowCompactForm: boolean;
@@ -201,9 +226,12 @@ export interface StructuredIdentifierPolicy {
 }
 
 /** Applies only explicit class policy; arbitrary punctuation stripping is forbidden. */
-export interface StructuredIdVariantExpander extends VariantExpander<"ssn" | "structured-id"> {
+export interface StructuredIdVariantExpander extends VariantExpander<
+  "ssn" | "structured-id"
+> {
   expand(
     value: TaggedValue,
-    context: VariantExpansionContext & Readonly<{ policy: StructuredIdentifierPolicy }>,
+    context: VariantExpansionContext &
+      Readonly<{ policy: StructuredIdentifierPolicy }>,
   ): VariantExpansionResult;
 }

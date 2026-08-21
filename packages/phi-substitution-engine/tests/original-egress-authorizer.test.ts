@@ -73,7 +73,9 @@ class Spool implements EncryptedAuditSpool {
   public prepared: PhiAuditPreparedRecord[] = [];
   public finalized: PhiAuditEvent[] = [];
 
-  public appendPrepared(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
+  public appendPrepared(
+    record: PhiAuditPreparedRecord,
+  ): Promise<AuditPreparationReceipt> {
     this.prepared.push(record);
     return Promise.resolve({
       attemptId: record.attemptId,
@@ -81,12 +83,24 @@ class Spool implements EncryptedAuditSpool {
       durableRecordId: "spool-gly-355",
     });
   }
-  public finalize(_receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+  public finalize(
+    _receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void> {
     this.finalized.push(event);
     return Promise.resolve();
   }
-  public drainTo() { return Promise.resolve({ examined: 0, delivered: 0, duplicates: 0, remaining: 0 }); }
-  public inspectEnvelope(): Promise<never> { return Promise.reject(new Error("not used")); }
+  public drainTo() {
+    return Promise.resolve({
+      examined: 0,
+      delivered: 0,
+      duplicates: 0,
+      remaining: 0,
+    });
+  }
+  public inspectEnvelope(): Promise<never> {
+    return Promise.reject(new Error("not used"));
+  }
   public health(): Promise<"ready" | "unavailable"> {
     return Promise.resolve(this.ready ? "ready" : "unavailable");
   }
@@ -97,7 +111,8 @@ function rig(decision: AuthorizedOriginalEgressDecision = DECISION) {
   const spool = new Spool();
   const queries: OriginalEgressPolicyQuery[] = [];
   const options: CreateProductionProtectedOriginalEgressAuthorizerOptions = {
-    engineVersion: "engine-gly-355" as CreateProductionProtectedOriginalEgressAuthorizerOptions["engineVersion"],
+    engineVersion:
+      "engine-gly-355" as CreateProductionProtectedOriginalEgressAuthorizerOptions["engineVersion"],
     enginePolicyVersion: POLICY_VERSION,
     policy: {
       requireAuthorizedOriginalEgress: async (query) => {
@@ -122,9 +137,14 @@ describe("GLY-355 production original-egress authorizer", () => {
     const value = rig();
     expect(Object.getPrototypeOf(value.authorizer)).toBeNull();
     expect(Object.isFrozen(value.authorizer)).toBe(true);
-    const authorization = await value.authorizer.authorizeOriginalEgress(REQUEST);
+    const authorization =
+      await value.authorizer.authorizeOriginalEgress(REQUEST);
     expect(Object.keys(value.queries[0]!).sort()).toEqual([
-      "contentClass", "context", "destinationKey", "enginePolicyVersion", "protocol",
+      "contentClass",
+      "context",
+      "destinationKey",
+      "enginePolicyVersion",
+      "protocol",
     ]);
     expect(authorization).toMatchObject({
       tenantId: CONTEXT.tenantId,
@@ -144,8 +164,13 @@ describe("GLY-355 production original-egress authorizer", () => {
 
   it("ORACLE-EVIDENCE-MISMATCH-REJECT/CALLER-BOOLEAN: exact decision binding has no permissive bypass", async () => {
     const value = rig({ ...DECISION, destinationKey: "different-destination" });
-    const candidate = { ...REQUEST, baaSatisfied: true } as OriginalEgressAuthorizationRequest;
-    await expect(value.authorizer.authorizeOriginalEgress(candidate)).rejects.toMatchObject({
+    const candidate = {
+      ...REQUEST,
+      baaSatisfied: true,
+    } as OriginalEgressAuthorizationRequest;
+    await expect(
+      value.authorizer.authorizeOriginalEgress(candidate),
+    ).rejects.toMatchObject({
       code: "PROVIDER_SAFETY_GATE_FAILED",
     });
     expect(value.primary.prepared).toHaveLength(0);
@@ -153,21 +178,29 @@ describe("GLY-355 production original-egress authorizer", () => {
 
   it("ORACLE-EVIDENCE-MISSING-EXPIRED: denial and expired evidence reject before PREPARE", async () => {
     const expired = rig({ ...DECISION, expiresAt: "2025-08-18T00:00:00.000Z" });
-    await expect(expired.authorizer.authorizeOriginalEgress(REQUEST)).rejects.toMatchObject({
+    await expect(
+      expired.authorizer.authorizeOriginalEgress(REQUEST),
+    ).rejects.toMatchObject({
       code: "PROVIDER_SAFETY_GATE_FAILED",
     });
     expect(expired.primary.prepared).toHaveLength(0);
 
     const denied = rig();
     const authorizer = createProductionProtectedOriginalEgressAuthorizer({
-      engineVersion: "engine-gly-355" as CreateProductionProtectedOriginalEgressAuthorizerOptions["engineVersion"],
+      engineVersion:
+        "engine-gly-355" as CreateProductionProtectedOriginalEgressAuthorizerOptions["engineVersion"],
       enginePolicyVersion: POLICY_VERSION,
-      policy: { requireAuthorizedOriginalEgress: () => Promise.reject(new Error("raw denial")) },
+      policy: {
+        requireAuthorizedOriginalEgress: () =>
+          Promise.reject(new Error("raw denial")),
+      },
       auditPrimary: denied.primary,
       auditSpool: denied.spool,
       clock: () => "2026-08-18T00:00:00.000Z",
     });
-    await expect(authorizer.authorizeOriginalEgress(REQUEST)).rejects.toMatchObject({
+    await expect(
+      authorizer.authorizeOriginalEgress(REQUEST),
+    ).rejects.toMatchObject({
       code: "PROVIDER_SAFETY_GATE_FAILED",
       message: "PROVIDER_SAFETY_GATE_FAILED",
     });
@@ -176,12 +209,16 @@ describe("GLY-355 production original-egress authorizer", () => {
   it("ORACLE-AUTH-AWAITS-PREPARE: authorization cannot resolve while durable PREPARE is pending", async () => {
     const value = rig();
     let release!: () => void;
-    value.primary.gate = new Promise<void>((resolve) => { release = resolve; });
-    let settled = false;
-    const pending = value.authorizer.authorizeOriginalEgress(REQUEST).then((authorization) => {
-      settled = true;
-      return authorization;
+    value.primary.gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    let settled = false;
+    const pending = value.authorizer
+      .authorizeOriginalEgress(REQUEST)
+      .then((authorization) => {
+        settled = true;
+        return authorization;
+      });
     await Promise.resolve();
     await Promise.resolve();
     expect(value.primary.prepared).toHaveLength(1);
@@ -194,15 +231,21 @@ describe("GLY-355 production original-egress authorizer", () => {
     const value = rig();
     value.primary.unavailable = true;
     value.spool.ready = false;
-    await expect(value.authorizer.authorizeOriginalEgress(REQUEST)).rejects.toSatisfy((error: unknown) =>
-      isPhiEngineError(error) && error.code === "AUDIT_DURABILITY_UNAVAILABLE",
+    await expect(
+      value.authorizer.authorizeOriginalEgress(REQUEST),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isPhiEngineError(error) &&
+        error.code === "AUDIT_DURABILITY_UNAVAILABLE",
     );
   });
 
   it("ORACLE-SECOND-AUTHORIZATION-PER-ATTEMPT: one attempt receives one capability and one PREPARE", async () => {
     const value = rig();
     await value.authorizer.authorizeOriginalEgress(REQUEST);
-    await expect(value.authorizer.authorizeOriginalEgress(REQUEST)).rejects.toMatchObject({
+    await expect(
+      value.authorizer.authorizeOriginalEgress(REQUEST),
+    ).rejects.toMatchObject({
       code: "PROVIDER_SAFETY_GATE_FAILED",
     });
     expect(value.primary.prepared).toHaveLength(1);
@@ -210,18 +253,23 @@ describe("GLY-355 production original-egress authorizer", () => {
 
   it("ORACLE-DESTINATION-KEY-GRAMMAR: unsafe destination metadata rejects before policy and PREPARE", async () => {
     const value = rig();
-    await expect(value.authorizer.authorizeOriginalEgress({
-      ...REQUEST,
-      destinationKey: " unsafe destination ",
-    })).rejects.toMatchObject({ code: "PROVIDER_SAFETY_GATE_FAILED" });
+    await expect(
+      value.authorizer.authorizeOriginalEgress({
+        ...REQUEST,
+        destinationKey: " unsafe destination ",
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_SAFETY_GATE_FAILED" });
     expect(value.queries).toHaveLength(0);
     expect(value.primary.prepared).toHaveLength(0);
   });
 
   it("ORACLE-AUTH-FINALIZE-ONCE/NONSERIALIZABLE: capability throws on serialization and second finalization", async () => {
     const value = rig();
-    const authorization = await value.authorizer.authorizeOriginalEgress(REQUEST);
-    expect(() => JSON.stringify(authorization)).toThrowError("PROVIDER_SAFETY_GATE_FAILED");
+    const authorization =
+      await value.authorizer.authorizeOriginalEgress(REQUEST);
+    expect(() => JSON.stringify(authorization)).toThrowError(
+      "PROVIDER_SAFETY_GATE_FAILED",
+    );
     await authorization.finalize("completed");
     expect(value.primary.finalized).toHaveLength(1);
     await expect(authorization.finalize("completed")).rejects.toMatchObject({
@@ -232,7 +280,8 @@ describe("GLY-355 production original-egress authorizer", () => {
 
   it("ORACLE-FINALIZE-DURABILITY-RETRY: a failed terminal write can retry through emitter idempotency", async () => {
     const value = rig();
-    const authorization = await value.authorizer.authorizeOriginalEgress(REQUEST);
+    const authorization =
+      await value.authorizer.authorizeOriginalEgress(REQUEST);
     value.primary.finalizeFailures = 1;
     await expect(authorization.finalize("completed")).rejects.toMatchObject({
       code: "AUDIT_DURABILITY_UNAVAILABLE",

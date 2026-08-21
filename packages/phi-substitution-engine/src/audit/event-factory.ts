@@ -1,4 +1,8 @@
-import type { PhiAuditEvent, PhiAuditOutcome, PhiAuditPreparedRecord } from "./ports";
+import type {
+  PhiAuditEvent,
+  PhiAuditOutcome,
+  PhiAuditPreparedRecord,
+} from "./ports";
 import { safeRead } from "../core/boundary-snapshot";
 
 /** Fixed, PHI-free ISO-8601 instant substituted when an injected clock throws (§7/N2). */
@@ -48,17 +52,32 @@ export function preparedToTerminalEvent(
   return {
     eventType: "AI_SUBSTITUTION_ATTEMPT",
     attemptId: safeRead(prepared, "attemptId") as PhiAuditEvent["attemptId"],
-    operationId: safeRead(prepared, "operationId") as PhiAuditEvent["operationId"],
+    operationId: safeRead(
+      prepared,
+      "operationId",
+    ) as PhiAuditEvent["operationId"],
     tenantId: safeRead(prepared, "tenantId") as PhiAuditEvent["tenantId"],
     matterId: safeRead(prepared, "matterId") as PhiAuditEvent["matterId"],
     actorId: safeRead(prepared, "actorId") as PhiAuditEvent["actorId"],
     operation: safeRead(prepared, "operation") as PhiAuditEvent["operation"],
     dictionaryVersion: dictionaryVersionString,
-    engineVersion: safeRead(prepared, "engineVersion") as PhiAuditEvent["engineVersion"],
+    engineVersion: safeRead(
+      prepared,
+      "engineVersion",
+    ) as PhiAuditEvent["engineVersion"],
     counts: safeRead(prepared, "counts") as PhiAuditEvent["counts"],
-    ambiguityCount: safeRead(prepared, "ambiguityCount") as PhiAuditEvent["ambiguityCount"],
-    detectorName: safeRead(prepared, "detectorName") as PhiAuditEvent["detectorName"],
-    detectorVersion: safeRead(prepared, "detectorVersion") as PhiAuditEvent["detectorVersion"],
+    ambiguityCount: safeRead(
+      prepared,
+      "ambiguityCount",
+    ) as PhiAuditEvent["ambiguityCount"],
+    detectorName: safeRead(
+      prepared,
+      "detectorName",
+    ) as PhiAuditEvent["detectorName"],
+    detectorVersion: safeRead(
+      prepared,
+      "detectorVersion",
+    ) as PhiAuditEvent["detectorVersion"],
     latencyMs: safeRead(prepared, "latencyMs") as PhiAuditEvent["latencyMs"],
     outcome,
     failureCode,

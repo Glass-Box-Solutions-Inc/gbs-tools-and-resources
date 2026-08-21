@@ -41,7 +41,7 @@ function interruptedEvent(): PhiAuditEvent {
 
 describe("GLY-353 production contracts", () => {
   it("ORACLE-PROD-ROOT-CANONICALIZATION-INTERNAL: evidence helpers are not runtime-root capabilities", async () => {
-    const root = await import("../src/index") as Record<string, unknown>;
+    const root = (await import("../src/index")) as Record<string, unknown>;
     expect(root["canonicalizeAzureEgressPolicySignedClaims"]).toBeUndefined();
     expect(root["computeAzureEgressPolicySignedClaimsDigest"]).toBeUndefined();
     expect(root["computeEnginePolicyVersion"]).toBeUndefined();
@@ -49,21 +49,34 @@ describe("GLY-353 production contracts", () => {
 
   it("ORACLE-PROD-INTERRUPTED-OUTCOME: interruption is an audit outcome, not a terminal failure code", () => {
     const serializer = new ExactAllowListAuditSerializer();
-    const encoded = new TextDecoder().decode(serializer.serialize(interruptedEvent()));
+    const encoded = new TextDecoder().decode(
+      serializer.serialize(interruptedEvent()),
+    );
 
     expect(encoded).toContain('"outcome":"interrupted"');
     expect(encoded).toContain('"failureCode":null');
     expect(isPhiEngineFailureCode("CALL_INTERRUPTED")).toBe(true);
-    expect(() => serializer.serialize({
-      ...interruptedEvent(),
-      failureCode: "CALL_INTERRUPTED",
-    } as PhiAuditEvent)).toThrow();
+    expect(() =>
+      serializer.serialize({
+        ...interruptedEvent(),
+        failureCode: "CALL_INTERRUPTED",
+      } as PhiAuditEvent),
+    ).toThrow();
   });
 
   it("ORACLE-PROD-ABORT-ONCE-LATCH-SHAPE: terminal transitions cannot overwrite an earlier winner", () => {
-    const source = readFileSync(new URL("../src/core/wrapper.ts", import.meta.url), "utf8");
-    expect(source).toContain('if (this.#terminal === null) this.#terminal = "failure";');
-    expect(source).toContain('if (this.#terminal !== null) return;\n    this.#terminal = "interrupted";');
-    expect(source).toContain('if (this.#terminal !== null) return false;\n    this.#terminal = "completed";');
+    const source = readFileSync(
+      new URL("../src/core/wrapper.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain(
+      'if (this.#terminal === null) this.#terminal = "failure";',
+    );
+    expect(source).toContain(
+      'if (this.#terminal !== null) return;\n    this.#terminal = "interrupted";',
+    );
+    expect(source).toContain(
+      'if (this.#terminal !== null) return false;\n    this.#terminal = "completed";',
+    );
   });
 });

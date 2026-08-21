@@ -31,7 +31,8 @@ export function wilsonLowerBound(
   const z2 = z * z;
   const denominator = 1 + z2 / trials;
   const centre = pHat + z2 / (2 * trials);
-  const margin = z * Math.sqrt((pHat * (1 - pHat) + z2 / (4 * trials)) / trials);
+  const margin =
+    z * Math.sqrt((pHat * (1 - pHat) + z2 / (4 * trials)) / trials);
   const lower = (centre - margin) / denominator;
   if (lower < 0) return 0;
   if (lower > 1) return 1;

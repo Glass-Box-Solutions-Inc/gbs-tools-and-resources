@@ -1,5 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { Ciphertext, DictionaryVersion, OperationAttemptId } from "../core/brands";
+import type {
+  Ciphertext,
+  DictionaryVersion,
+  OperationAttemptId,
+} from "../core/brands";
 import type {
   AuditPreparationReceipt,
   AuditPrimaryStore,
@@ -15,7 +19,8 @@ import { preparedToTerminalEvent, safeClockNow } from "./event-factory";
 import { intrinsicCopy, safeRead, safeString } from "../core/boundary-snapshot";
 
 /** Cleartext-envelope `createdAt` must be an ISO-8601 UTC instant (never injected free text). */
-const ENVELOPE_ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const ENVELOPE_ISO_8601_UTC =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 /** Cleartext-envelope `keyVersion` is a conservative slug — never injected free text. */
 const SAFE_KEY_VERSION = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -41,7 +46,9 @@ interface SpoolEntry {
 
 /** JSON-safe wire form: bigint identifiers (dictionary version) become strings. */
 function toWireBytes(value: unknown): Uint8Array {
-  const json = JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
+  const json = JSON.stringify(value, (_key, v) =>
+    typeof v === "bigint" ? v.toString() : v,
+  );
   return new TextEncoder().encode(json);
 }
 
@@ -57,7 +64,9 @@ function encodeEnvelope(envelope: EncryptedSpoolEnvelope): Uint8Array {
     keyVersion: envelope.keyVersion,
     cipherSuite: envelope.cipherSuite,
     nonce: Buffer.from(envelope.nonce).toString("base64"),
-    authenticationTag: Buffer.from(envelope.authenticationTag).toString("base64"),
+    authenticationTag: Buffer.from(envelope.authenticationTag).toString(
+      "base64",
+    ),
     ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
     createdAt: envelope.createdAt,
   };
@@ -66,7 +75,10 @@ function encodeEnvelope(envelope: EncryptedSpoolEnvelope): Uint8Array {
 
 /** Inverse of `encodeEnvelope`: reconstructs an envelope read back from the durable volume. */
 function decodeEnvelope(bytes: Uint8Array): EncryptedSpoolEnvelope {
-  const onDisk = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  const onDisk = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+    string,
+    unknown
+  >;
   return {
     envelopeVersion: onDisk["envelopeVersion"] as 1,
     recordId: onDisk["recordId"] as string,
@@ -74,8 +86,12 @@ function decodeEnvelope(bytes: Uint8Array): EncryptedSpoolEnvelope {
     keyVersion: onDisk["keyVersion"] as string,
     cipherSuite: onDisk["cipherSuite"] as "AES-256-GCM",
     nonce: Uint8Array.from(Buffer.from(onDisk["nonce"] as string, "base64")),
-    authenticationTag: Uint8Array.from(Buffer.from(onDisk["authenticationTag"] as string, "base64")),
-    ciphertext: Uint8Array.from(Buffer.from(onDisk["ciphertext"] as string, "base64")) as Ciphertext,
+    authenticationTag: Uint8Array.from(
+      Buffer.from(onDisk["authenticationTag"] as string, "base64"),
+    ),
+    ciphertext: Uint8Array.from(
+      Buffer.from(onDisk["ciphertext"] as string, "base64"),
+    ) as Ciphertext,
     createdAt: onDisk["createdAt"] as string,
   };
 }
@@ -98,14 +114,18 @@ const PRIMED_MARKER = new TextEncoder().encode("1");
  * rehydrate to `null`, never `BigInt(null)` — which would throw and drop the terminal on drain.
  */
 function rehydratePrepared(value: unknown): PhiAuditPreparedRecord {
-  const record = value as PhiAuditPreparedRecord & { dictionaryVersion: unknown };
+  const record = value as PhiAuditPreparedRecord & {
+    dictionaryVersion: unknown;
+  };
   const version = record.dictionaryVersion;
   return {
     ...record,
     dictionaryVersion:
       version === null || version === undefined
         ? (null as unknown as DictionaryVersion)
-        : (BigInt(version as string | number | bigint) as unknown as DictionaryVersion),
+        : (BigInt(
+            version as string | number | bigint,
+          ) as unknown as DictionaryVersion),
   };
 }
 
@@ -138,7 +158,9 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     return safeRead(this.#volume, "durable") === true ? "ready" : "unavailable";
   }
 
-  public async appendPrepared(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
+  public async appendPrepared(
+    record: PhiAuditPreparedRecord,
+  ): Promise<AuditPreparationReceipt> {
     const recordId = recordIdFor(record.attemptId);
     // N3 durable idempotency: after a restart the in-process finalized-set is empty, so the
     // durable `.final` marker on the volume is the only source of truth. A fresh append for an
@@ -149,24 +171,43 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     try {
       finalMarker = await this.#volume.read(`${recordId}.final`);
     } catch {
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, { attemptId: record.attemptId });
+      throw new PhiAuditError(
+        "AUDIT_DURABILITY_UNAVAILABLE",
+        record.operationId,
+        { attemptId: record.attemptId },
+      );
     }
     if (finalMarker !== null) {
-      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
-        attemptId: record.attemptId,
-      });
+      throw new PhiAuditError(
+        "AUDIT_ATTEMPT_ALREADY_FINALIZED",
+        record.operationId,
+        {
+          attemptId: record.attemptId,
+        },
+      );
     }
-    const envelope = this.#encrypt(recordId, record.attemptId, toWireBytes(record));
+    const envelope = this.#encrypt(
+      recordId,
+      record.attemptId,
+      toWireBytes(record),
+    );
     // §7/N2: guard the injected-volume `putAtomic` REJECTION and read its `flushed` result getter-safe
     // (a resolved hostile object could carry a throwing getter) — either failure → a fixed code.
     let putResult: unknown;
     try {
-      putResult = await this.#volume.putAtomic(recordId, encodeEnvelope(envelope));
+      putResult = await this.#volume.putAtomic(
+        recordId,
+        encodeEnvelope(envelope),
+      );
     } catch {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, { attemptId: record.attemptId });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, {
+        attemptId: record.attemptId,
+      });
     }
     if (safeRead(putResult, "flushed") !== true) {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, { attemptId: record.attemptId });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, {
+        attemptId: record.attemptId,
+      });
     }
     this.#entries.set(recordId, {
       recordId,
@@ -177,26 +218,48 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       eventEnvelope: null,
       preparedInPrimary: false,
     });
-    return { attemptId: record.attemptId, location: "ENCRYPTED_LOCAL_SPOOL", durableRecordId: recordId };
+    return {
+      attemptId: record.attemptId,
+      location: "ENCRYPTED_LOCAL_SPOOL",
+      durableRecordId: recordId,
+    };
   }
 
-  public async finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+  public async finalize(
+    receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void> {
     const entry = this.#entries.get(receipt.durableRecordId);
     if (entry === undefined) {
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", event.operationId, { attemptId: event.attemptId });
+      throw new PhiAuditError(
+        "AUDIT_DURABILITY_UNAVAILABLE",
+        event.operationId,
+        { attemptId: event.attemptId },
+      );
     }
     const finalId = `${entry.recordId}.final`;
-    const envelope = this.#encrypt(finalId, event.attemptId, toWireBytes(event));
+    const envelope = this.#encrypt(
+      finalId,
+      event.attemptId,
+      toWireBytes(event),
+    );
     // §7/N2: guard the injected-volume `putAtomic` REJECTION and read its `flushed` result getter-safe
     // — either failure surfaces a fixed code, never a raw (PHI) message from this public method.
     let putResult: unknown;
     try {
-      putResult = await this.#volume.putAtomic(finalId, encodeEnvelope(envelope));
+      putResult = await this.#volume.putAtomic(
+        finalId,
+        encodeEnvelope(envelope),
+      );
     } catch {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, { attemptId: event.attemptId });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, {
+        attemptId: event.attemptId,
+      });
     }
     if (safeRead(putResult, "flushed") !== true) {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, { attemptId: event.attemptId });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, {
+        attemptId: event.attemptId,
+      });
     }
     entry.event = event;
     entry.eventEnvelope = envelope;
@@ -253,7 +316,14 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
           remaining += 1;
           continue;
         }
-        const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, safeClockNow(this.#clock));
+        const event =
+          entry.event ??
+          preparedToTerminalEvent(
+            entry.prepared,
+            "unknown_after_send",
+            null,
+            safeClockNow(this.#clock),
+          );
         await primary.finalize(event);
         // Discard BEFORE counting `delivered` so a discard failure keeps the entry (idempotent retry).
         await this.#discard(entry.recordId);
@@ -310,7 +380,9 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
           continue;
         }
         const preparedEnvelope = decodeEnvelope(preparedBytes);
-        const prepared = rehydratePrepared(fromWireBytes(this.#decrypt(preparedEnvelope)));
+        const prepared = rehydratePrepared(
+          fromWireBytes(this.#decrypt(preparedEnvelope)),
+        );
         const finalBytes = await this.#volume.read(`${recordId}.final`);
         let event: PhiAuditEvent | null = null;
         let eventEnvelope: EncryptedSpoolEnvelope | null = null;
@@ -321,7 +393,8 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         // Restore the durable prepare-success/finalize-pending flag so a partial (prepared in
         // primary, finalize failed) drained on a PRIOR replica is recognised as OUR own attempt
         // after restart — its terminal is still owed and must not be dropped as a duplicate.
-        const preparedInPrimary = (await this.#volume.read(`${recordId}.primed`)) !== null;
+        const preparedInPrimary =
+          (await this.#volume.read(`${recordId}.primed`)) !== null;
         this.#entries.set(recordId, {
           recordId,
           attemptId: preparedEnvelope.attemptId,
@@ -337,10 +410,14 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     }
   }
 
-  public async inspectEnvelope(recordId: string): Promise<EncryptedSpoolEnvelope> {
+  public async inspectEnvelope(
+    recordId: string,
+  ): Promise<EncryptedSpoolEnvelope> {
     const entry = this.#entries.get(recordId);
     if (entry === undefined) {
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, { recordId });
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, {
+        recordId,
+      });
     }
     return entry.eventEnvelope ?? entry.preparedEnvelope;
   }
@@ -357,7 +434,10 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
   public durabilityMetrics(): Readonly<{ survivesReplicaRestart: boolean }> {
     // §7/N2: read the injected-volume `durable` getter throw-safe (see health()).
-    return { survivesReplicaRestart: safeRead(this.#volume, "durable") === true && !this.#acknowledgedLoss };
+    return {
+      survivesReplicaRestart:
+        safeRead(this.#volume, "durable") === true && !this.#acknowledgedLoss,
+    };
   }
 
   /**
@@ -368,7 +448,10 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
    * Returns false on flush failure so the caller keeps the entry for a later retry.
    */
   async #persistPrimedMarker(entry: SpoolEntry): Promise<boolean> {
-    const { flushed } = await this.#volume.putAtomic(`${entry.recordId}.primed`, PRIMED_MARKER);
+    const { flushed } = await this.#volume.putAtomic(
+      `${entry.recordId}.primed`,
+      PRIMED_MARKER,
+    );
     return flushed;
   }
 
@@ -382,7 +465,11 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     }
   }
 
-  #encrypt(recordId: string, attemptId: OperationAttemptId, plaintext: Uint8Array): EncryptedSpoolEnvelope {
+  #encrypt(
+    recordId: string,
+    attemptId: OperationAttemptId,
+    plaintext: Uint8Array,
+  ): EncryptedSpoolEnvelope {
     // §7/N2: `dataKey()` is an INJECTED-port call — a throwing key provider (its error/code could carry
     // PHI) must fail closed with a FIXED code, never propagate raw out of appendPrepared/finalize. Read
     // and shape-validate the key INSIDE the guard (a throwing `.length` on a hostile carrier is caught).
@@ -400,7 +487,9 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         throw new Error("invalid_key");
       }
     } catch {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_key" });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {
+        reason: "invalid_key",
+      });
     }
     // §7/N2: `keyVersion` and `createdAt` are INJECTED-port outputs written into the CLEAR (unencrypted)
     // envelope that persists durably. Read them getter-throw-safe and validate their SHAPE — a hostile
@@ -415,14 +504,21 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       createdAt = undefined;
     }
     if (
-      keyVersion === undefined || !SAFE_KEY_VERSION.test(keyVersion) ||
-      typeof createdAt !== "string" || !ENVELOPE_ISO_8601_UTC.test(createdAt)
+      keyVersion === undefined ||
+      !SAFE_KEY_VERSION.test(keyVersion) ||
+      typeof createdAt !== "string" ||
+      !ENVELOPE_ISO_8601_UTC.test(createdAt)
     ) {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_envelope_metadata" });
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {
+        reason: "invalid_envelope_metadata",
+      });
     }
     const nonce = randomBytes(NONCE_BYTES);
     const cipher = createCipheriv("aes-256-gcm", keyBytes, nonce);
-    const ciphertext = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
+    const ciphertext = Buffer.concat([
+      cipher.update(Buffer.from(plaintext)),
+      cipher.final(),
+    ]);
     const authenticationTag = cipher.getAuthTag();
     return {
       envelopeVersion: 1,
@@ -453,11 +549,20 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         throw new Error("invalid_key");
       }
     } catch {
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, { reason: "invalid_key" });
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, {
+        reason: "invalid_key",
+      });
     }
-    const decipher = createDecipheriv("aes-256-gcm", keyBytes, Buffer.from(envelope.nonce));
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      keyBytes,
+      Buffer.from(envelope.nonce),
+    );
     decipher.setAuthTag(Buffer.from(envelope.authenticationTag));
-    const plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext)), decipher.final()]);
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext)),
+      decipher.final(),
+    ]);
     return Uint8Array.from(plaintext);
   }
 }

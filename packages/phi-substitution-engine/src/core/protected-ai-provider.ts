@@ -1,4 +1,8 @@
-import type { MatterAiContextAccessor, MatterAiPolicyAccessor, PhiSubstitutionEngine } from "./contracts";
+import type {
+  MatterAiContextAccessor,
+  MatterAiPolicyAccessor,
+  PhiSubstitutionEngine,
+} from "./contracts";
 import type { DisplayText, EngineVersion, TokenizedText } from "./brands";
 import type {
   AuditPrimaryStore,
@@ -22,7 +26,9 @@ export interface AiProvider<
 export interface ClassifiedProviderOptions<GenerateOptions> {
   readonly segments: readonly import("./contracts").TextSegment[];
   /** Rebuilds options from exactly one tokenized value for every classified segment path. */
-  rebuild(tokenized: readonly import("./contracts").TokenizedTextSegment[]): GenerateOptions;
+  rebuild(
+    tokenized: readonly import("./contracts").TokenizedTextSegment[],
+  ): GenerateOptions;
 }
 
 /**
@@ -30,24 +36,32 @@ export interface ClassifiedProviderOptions<GenerateOptions> {
  * fields MUST return UNCLASSIFIED_PROVIDER_FIELD; no permissive passthrough is allowed.
  */
 export interface AiProviderOptionProjector<GenerateOptions> {
-  classify(options: GenerateOptions): ClassifiedProviderOptions<GenerateOptions>;
+  classify(
+    options: GenerateOptions,
+  ): ClassifiedProviderOptions<GenerateOptions>;
 }
 
 /** Provider choice/safety gates inspect ORIGINAL content and are fixed before substitution. */
 export interface OriginalContentProviderRouter<GenerateOptions, RawProvider> {
-  selectUsingOriginalContent(options: GenerateOptions): Promise<Readonly<{
-    provider: RawProvider;
-    isProductionSafe: boolean;
-    baaSatisfied: boolean;
-    providerId: string;
-  }>>;
+  selectUsingOriginalContent(options: GenerateOptions): Promise<
+    Readonly<{
+      provider: RawProvider;
+      isProductionSafe: boolean;
+      baaSatisfied: boolean;
+      providerId: string;
+    }>
+  >;
 }
 
 /** Content-bearing safe observability accepts branded tokenized text only. */
 export interface SafeAiTrace {
-  request(paths: readonly Readonly<{ path: string; text: TokenizedText }>[]): Promise<void>;
+  request(
+    paths: readonly Readonly<{ path: string; text: TokenizedText }>[],
+  ): Promise<void>;
   response(text: TokenizedText): Promise<void>;
-  metadata(values: Readonly<Record<string, string | number | boolean | null>>): Promise<void>;
+  metadata(
+    values: Readonly<Record<string, string | number | boolean | null>>,
+  ): Promise<void>;
 }
 
 /** Provider-neutral, PHI-free usage metadata copied into a protected result. */
@@ -96,21 +110,36 @@ export interface ProductionRawTextResult extends ProductionRawResultTail {
 }
 
 /** Type-only private provider seam used by production composition. */
-export interface ProductionRawProviderPort<GenerateOptions, EmbeddingKind = string> {
-  generateText(options: GenerateOptions, signal: AbortSignal): Promise<ProductionRawTextResult>;
+export interface ProductionRawProviderPort<
+  GenerateOptions,
+  EmbeddingKind = string,
+> {
+  generateText(
+    options: GenerateOptions,
+    signal: AbortSignal,
+  ): Promise<ProductionRawTextResult>;
   generateStream(
     options: GenerateOptions,
     onChunk: (chunk: TokenizedText) => void | Promise<void>,
     signal: AbortSignal,
   ): Promise<ProductionRawResultTail>;
-  embedText(text: TokenizedText, kind: EmbeddingKind): Promise<readonly number[]>;
+  embedText(
+    text: TokenizedText,
+    kind: EmbeddingKind,
+  ): Promise<readonly number[]>;
 }
 
 export type DisplayChunkSink = (chunk: DisplayText) => void | Promise<void>;
 
 /** Provider-agnostic protected surface for product-owned adapters. */
-export interface ProtectedAiCallSurface<GenerateOptions, EmbeddingKind = string> {
-  generateText(options: GenerateOptions, signal?: AbortSignal): Promise<ProtectedAiTextResult>;
+export interface ProtectedAiCallSurface<
+  GenerateOptions,
+  EmbeddingKind = string,
+> {
+  generateText(
+    options: GenerateOptions,
+    signal?: AbortSignal,
+  ): Promise<ProtectedAiTextResult>;
   streamText(
     options: GenerateOptions,
     sink: DisplayChunkSink,
@@ -168,8 +197,16 @@ export declare class ProtectedAiProvider<
   EmbeddingKind,
   EmbeddingResult,
   RawProvider,
-> implements AiProvider<GenerateOptions, GenerateTextResult, GenerateStreamResult, EmbeddingKind, EmbeddingResult> {
-  constructor(dependencies: ProtectedAiProviderDependencies<GenerateOptions, RawProvider>);
+> implements AiProvider<
+  GenerateOptions,
+  GenerateTextResult,
+  GenerateStreamResult,
+  EmbeddingKind,
+  EmbeddingResult
+> {
+  constructor(
+    dependencies: ProtectedAiProviderDependencies<GenerateOptions, RawProvider>,
+  );
   generateText(options: GenerateOptions): GenerateTextResult;
   generateStream(options: GenerateOptions): GenerateStreamResult;
   embedText(text: string, kind: EmbeddingKind): EmbeddingResult;

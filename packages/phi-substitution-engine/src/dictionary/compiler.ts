@@ -26,7 +26,10 @@ import type {
   VariantSource,
 } from "./contracts";
 import { AhoCorasickBuilder } from "./aho-corasick";
-import { AhoCorasickCompiledDictionary, type CompiledEntry } from "./compiled-dictionary";
+import {
+  AhoCorasickCompiledDictionary,
+  type CompiledEntry,
+} from "./compiled-dictionary";
 import { foldCached } from "./normalize";
 import { createAssignmentPort } from "./token-port";
 import {
@@ -40,7 +43,12 @@ import {
 import { dedupeInOrder } from "../variants/support";
 import { intrinsicCopy, safeRead } from "../core/boundary-snapshot";
 
-const KNOWN_STRUCTURED_SEPARATORS: readonly StructuredSeparator[] = ["-", " ", "/", "."];
+const KNOWN_STRUCTURED_SEPARATORS: readonly StructuredSeparator[] = [
+  "-",
+  " ",
+  "/",
+  ".",
+];
 
 /** Parses the permitted-separator scalar (`field.options` is frozen to scalars) — a string whose
  *  characters are the allowed separators — into the policy's separator list. */
@@ -48,7 +56,10 @@ function parseSeparators(value: unknown): readonly StructuredSeparator[] {
   if (typeof value !== "string") return [];
   const out: StructuredSeparator[] = [];
   for (const ch of value) {
-    if ((KNOWN_STRUCTURED_SEPARATORS as readonly string[]).includes(ch) && !out.includes(ch as StructuredSeparator)) {
+    if (
+      (KNOWN_STRUCTURED_SEPARATORS as readonly string[]).includes(ch) &&
+      !out.includes(ch as StructuredSeparator)
+    ) {
       out.push(ch as StructuredSeparator);
     }
   }
@@ -67,8 +78,11 @@ function structuredIdPolicyFromOptions(
   const separators = parseSeparators(options?.["permittedSeparators"]);
   return {
     requiredAlphaPrefix:
-      typeof options?.["requiredAlphaPrefix"] === "string" ? (options["requiredAlphaPrefix"] as string) : null,
-    permittedSeparators: separators.length > 0 ? separators : KNOWN_STRUCTURED_SEPARATORS,
+      typeof options?.["requiredAlphaPrefix"] === "string"
+        ? (options["requiredAlphaPrefix"] as string)
+        : null,
+    permittedSeparators:
+      separators.length > 0 ? separators : KNOWN_STRUCTURED_SEPARATORS,
     allowCompactForm: options?.["allowCompactForm"] === true,
     minimumAlphanumericLength:
       typeof options?.["minimumAlphanumericLength"] === "number"
@@ -119,7 +133,11 @@ function expandForms(value: TaggedValue, locale: string): readonly string[] {
   let expansion: VariantExpansion | null = null;
   switch (value.field.expander) {
     case "person-name":
-      expansion = expandPersonNameVariants({ canonical, approvedAliases: aliases, locale });
+      expansion = expandPersonNameVariants({
+        canonical,
+        approvedAliases: aliases,
+        locale,
+      });
       break;
     case "date":
       expansion = expandDateVariants({ canonical, locale });
@@ -141,9 +159,13 @@ function expandForms(value: TaggedValue, locale: string): readonly string[] {
   // truth. Expander candidates are ADDITIONAL deterministic forms merged on top; a policy that
   // omits the canonical's own separator can therefore never drop the canonical itself.
   const candidates =
-    expansion !== null && expansion.errorCode === null ? expansion.candidates : [];
+    expansion !== null && expansion.errorCode === null
+      ? expansion.candidates
+      : [];
   return dedupeInOrder(
-    [canonical, ...aliases, ...candidates].filter((form) => form.trim().length > 0),
+    [canonical, ...aliases, ...candidates].filter(
+      (form) => form.trim().length > 0,
+    ),
   );
 }
 
@@ -265,12 +287,14 @@ export class InMemoryCaseTruthReader implements CaseTruthReader {
   // reflection, so the backing MUST be a #field — a returned reader instance never leaks values.
   readonly #byKey = new Map<string, readonly TaggedValue[]>();
 
-  #key(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    sourceTruthRevision: string;
-  }>): string {
+  #key(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      sourceTruthRevision: string;
+    }>,
+  ): string {
     return [
       input.tenantId,
       input.matterId,
@@ -291,12 +315,14 @@ export class InMemoryCaseTruthReader implements CaseTruthReader {
     this.#byKey.set(this.#key(input), values);
   }
 
-  public readTaggedValues(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    sourceTruthRevision: string;
-  }>): Promise<readonly TaggedValue[]> {
+  public readTaggedValues(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      sourceTruthRevision: string;
+    }>,
+  ): Promise<readonly TaggedValue[]> {
     return Promise.resolve(this.#byKey.get(this.#key(input)) ?? []);
   }
 }

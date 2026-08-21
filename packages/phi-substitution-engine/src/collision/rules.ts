@@ -32,12 +32,55 @@ const BARE_YEAR = /^[12]\d{3}$/;
  * are deliberately absent.
  */
 const AMBIGUOUS_LEXICON: ReadonlySet<string> = new Set([
-  "january", "february", "march", "april", "may", "june",
-  "july", "august", "september", "october", "november", "december",
-  "will", "may", "can", "could", "would", "should", "shall", "must", "might",
-  "met", "said", "and", "the", "in", "of", "to", "is", "are", "was", "were",
-  "be", "been", "on", "at", "for", "with", "as", "by", "it", "he", "she",
-  "they", "we", "you", "over", "filed", "appeared",
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "will",
+  "may",
+  "can",
+  "could",
+  "would",
+  "should",
+  "shall",
+  "must",
+  "might",
+  "met",
+  "said",
+  "and",
+  "the",
+  "in",
+  "of",
+  "to",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "on",
+  "at",
+  "for",
+  "with",
+  "as",
+  "by",
+  "it",
+  "he",
+  "she",
+  "they",
+  "we",
+  "you",
+  "over",
+  "filed",
+  "appeared",
 ]);
 
 /** Reads the code point ending at `offset` (the char immediately before a span). */
@@ -73,7 +116,10 @@ function isAlnumChar(ch: string | null): boolean {
 }
 
 export class Phase1BoundaryRule implements BoundaryRule {
-  public accepts(originalText: string, candidate: DictionaryMatchCandidate): boolean {
+  public accepts(
+    originalText: string,
+    candidate: DictionaryMatchCandidate,
+  ): boolean {
     const start = candidate.startUtf16 as unknown as number;
     const end = candidate.endUtf16 as unknown as number;
     const before = codePointBefore(originalText, start);
@@ -93,7 +139,10 @@ export class Phase1BoundaryRule implements BoundaryRule {
 }
 
 export class Phase1DistinctivenessRule implements DistinctivenessRule {
-  public accepts(candidate: DictionaryMatchCandidate, _locale: string): boolean {
+  public accepts(
+    candidate: DictionaryMatchCandidate,
+    _locale: string,
+  ): boolean {
     const normalized = candidate.candidate.normalized.trim();
     if ([...normalized].length <= 1) return false;
     if (BARE_YEAR.test(normalized)) return false;
@@ -123,7 +172,10 @@ const TRIBUNAL_MARKER = /\b[A-Z]{2,}\b/;
 const asUtf16 = (value: number): Utf16Offset => value as unknown as Utf16Offset;
 
 export class Phase1CitationRule implements CitationRule {
-  public validatedSpans(originalText: string, _locale: string): readonly ValidatedCitationSpan[] {
+  public validatedSpans(
+    originalText: string,
+    _locale: string,
+  ): readonly ValidatedCitationSpan[] {
     const spans: ValidatedCitationSpan[] = [];
     CITATION.lastIndex = 0;
     let match: RegExpExecArray | null;

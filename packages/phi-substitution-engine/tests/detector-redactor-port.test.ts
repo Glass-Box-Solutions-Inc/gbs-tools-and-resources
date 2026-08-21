@@ -31,27 +31,33 @@ describe("vendor-neutral Phileas/Azure detector-redactor port", () => {
   });
 
   it("SEC-PHILEAS-02: explicit replacement plan is applied exactly, not invented by FPE/context", async () => {
-    const r = await loadDetectorHarness().run("PHILEAS-EXPLICIT-REPLACEMENT-PLAN", {
-      text: "Maria García, MRN-A7719",
-      instructions: [
-        { id: "s1", span: [0, 12], token: "[[Detected_Person_1]]" },
-        { id: "s2", span: [14, 23], token: "[[Detected_MRN_1]]" },
-      ],
-      forbidNativeReplacementAsAuthority: true,
-    });
+    const r = await loadDetectorHarness().run(
+      "PHILEAS-EXPLICIT-REPLACEMENT-PLAN",
+      {
+        text: "Maria García, MRN-A7719",
+        instructions: [
+          { id: "s1", span: [0, 12], token: "[[Detected_Person_1]]" },
+          { id: "s2", span: [14, 23], token: "[[Detected_MRN_1]]" },
+        ],
+        forbidNativeReplacementAsAuthority: true,
+      },
+    );
     expect(r.tokenizedText).toBe("[[Detected_Person_1]], [[Detected_MRN_1]]");
     expect(r.appliedSpanIds).toEqual(["s1", "s2"]);
     expect(r.tokenizedText).not.toMatch(/^[A-Za-z0-9-]+$/);
   });
 
   it("SEC-L12-02 / M-L12-TRUST-INVALID-DETECTOR-OFFSET: invalid offsets fail closed", async () => {
-    const r = await loadDetectorHarness().run("M-L12-TRUST-INVALID-DETECTOR-OFFSET", {
-      text: "A😀B Maria García",
-      rawSpans: [
-        { id: "inside-surrogate", start: 2, end: 3, encoding: "UTF16" },
-        { id: "out-of-range", start: 100, end: 120, encoding: "UTF16" },
-      ],
-    });
+    const r = await loadDetectorHarness().run(
+      "M-L12-TRUST-INVALID-DETECTOR-OFFSET",
+      {
+        text: "A😀B Maria García",
+        rawSpans: [
+          { id: "inside-surrogate", start: 2, end: 3, encoding: "UTF16" },
+          { id: "out-of-range", start: 100, end: 120, encoding: "UTF16" },
+        ],
+      },
+    );
     expectFailedClosed(r, "INVALID_DETECTOR_OFFSET");
   });
 

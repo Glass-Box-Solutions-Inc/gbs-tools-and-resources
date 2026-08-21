@@ -39,8 +39,17 @@ function statusCodeOf(error: unknown): number | undefined {
   return typeof statusCode === "number" ? statusCode : undefined;
 }
 
-function propertiesOf(etag: string | undefined, contentLength: number | undefined): BlobProperties {
-  if (etag === undefined || etag.length === 0 || contentLength === undefined || !Number.isSafeInteger(contentLength) || contentLength < 0) {
+function propertiesOf(
+  etag: string | undefined,
+  contentLength: number | undefined,
+): BlobProperties {
+  if (
+    etag === undefined ||
+    etag.length === 0 ||
+    contentLength === undefined ||
+    !Number.isSafeInteger(contentLength) ||
+    contentLength < 0
+  ) {
     throw new Error("azure_files_blob_store_invalid_properties");
   }
   return { etag, len: contentLength };
@@ -49,15 +58,29 @@ function propertiesOf(etag: string | undefined, contentLength: number | undefine
 /** Azure Files implementation for the immutable `phi-spool` data plane. */
 export class AzureFilesBlobStore implements BlobStore {
   readonly #share;
-  readonly #directories = new Map<ParsedPath["directory"], ShareDirectoryClient>();
+  readonly #directories = new Map<
+    ParsedPath["directory"],
+    ShareDirectoryClient
+  >();
   #ready: Promise<void> | undefined;
 
-  public constructor(accountName: string, accountKey: string, shareName = "phi-spool") {
-    if (accountName.length === 0 || accountKey.length === 0 || shareName.length === 0) {
+  public constructor(
+    accountName: string,
+    accountKey: string,
+    shareName = "phi-spool",
+  ) {
+    if (
+      accountName.length === 0 ||
+      accountKey.length === 0 ||
+      shareName.length === 0
+    ) {
       throw new Error("azure_files_blob_store_invalid_configuration");
     }
     const credential = new StorageSharedKeyCredential(accountName, accountKey);
-    const service = new ShareServiceClient(`https://${accountName}.file.core.windows.net`, credential);
+    const service = new ShareServiceClient(
+      `https://${accountName}.file.core.windows.net`,
+      credential,
+    );
     this.#share = service.getShareClient(shareName);
     for (const root of ROOT_DIRECTORIES) {
       this.#directories.set(root, this.#share.getDirectoryClient(root));
@@ -68,7 +91,11 @@ export class AzureFilesBlobStore implements BlobStore {
     if (this.#ready === undefined) {
       this.#ready = (async () => {
         await this.#share.createIfNotExists();
-        await Promise.all([...this.#directories.values()].map(async (directory) => directory.createIfNotExists()));
+        await Promise.all(
+          [...this.#directories.values()].map(async (directory) =>
+            directory.createIfNotExists(),
+          ),
+        );
       })();
     }
     try {
@@ -88,7 +115,10 @@ export class AzureFilesBlobStore implements BlobStore {
     return directory.getFileClient(parsed.name);
   }
 
-  public async putStaging(stagingPath: string, bytes: Uint8Array): Promise<void> {
+  public async putStaging(
+    stagingPath: string,
+    bytes: Uint8Array,
+  ): Promise<void> {
     const parsed = parsePath(stagingPath);
     if (parsed.directory !== "staging") {
       throw new Error("azure_files_blob_store_requires_staging_path");
@@ -98,12 +128,22 @@ export class AzureFilesBlobStore implements BlobStore {
     await file.create(bytes.byteLength);
     for (let offset = 0; offset < bytes.byteLength; offset += MAX_RANGE_BYTES) {
       const length = Math.min(MAX_RANGE_BYTES, bytes.byteLength - offset);
-      await file.uploadRange(bytes.subarray(offset, offset + length), offset, length);
+      await file.uploadRange(
+        bytes.subarray(offset, offset + length),
+        offset,
+        length,
+      );
     }
   }
 
-  public async finalize(stagingPath: string, blobPath: string): Promise<BlobProperties> {
-    if (parsePath(stagingPath).directory !== "staging" || parsePath(blobPath).directory !== "blobs") {
+  public async finalize(
+    stagingPath: string,
+    blobPath: string,
+  ): Promise<BlobProperties> {
+    if (
+      parsePath(stagingPath).directory !== "staging" ||
+      parsePath(blobPath).directory !== "blobs"
+    ) {
       throw new Error("azure_files_blob_store_invalid_finalize_paths");
     }
     await this.#initialize();

@@ -30,25 +30,40 @@ type PortOutcome = Readonly<{
  * before the shared deadline, the belt fails closed — it never proceeds to a provider call.
  */
 export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
-  async detectWithin(params: Readonly<{
-    primary: DetectorRedactorPort;
-    fallback: DetectorRedactorPort | null;
-    request: DetectorInput;
-    deadlineMs: number;
-    normalizer: DetectorSpanNormalizer;
-  }>): Promise<PortOutcome> {
+  async detectWithin(
+    params: Readonly<{
+      primary: DetectorRedactorPort;
+      fallback: DetectorRedactorPort | null;
+      request: DetectorInput;
+      deadlineMs: number;
+      normalizer: DetectorSpanNormalizer;
+    }>,
+  ): Promise<PortOutcome> {
     const { primary, fallback, request, deadlineMs, normalizer } = params;
 
     const controller = new AbortController();
-    const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), deadlineMs);
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      () => controller.abort(),
+      deadlineMs,
+    );
     try {
-      const primaryOutcome = await this.tryPort(primary, request, controller.signal, normalizer);
+      const primaryOutcome = await this.tryPort(
+        primary,
+        request,
+        controller.signal,
+        normalizer,
+      );
       if (primaryOutcome) {
         return primaryOutcome;
       }
       // ONE shared deadline: the fallback runs under the SAME signal/budget, never a fresh timer.
       if (fallback && !controller.signal.aborted) {
-        const fallbackOutcome = await this.tryPort(fallback, request, controller.signal, normalizer);
+        const fallbackOutcome = await this.tryPort(
+          fallback,
+          request,
+          controller.signal,
+          normalizer,
+        );
         if (fallbackOutcome) {
           return fallbackOutcome;
         }
@@ -106,7 +121,8 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
         return null;
       }
       descriptor = {
-        name: (safeString(d, "name") ?? "") as DetectorArtifactDescriptor["name"],
+        name: (safeString(d, "name") ??
+          "") as DetectorArtifactDescriptor["name"],
         serviceVersion: safeString(d, "serviceVersion") ?? "",
         engineVersion,
         modelVersion: safeString(d, "modelVersion") ?? "",
@@ -122,7 +138,9 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
       // §7/N2: the normalizer's `spans` is an injected-adapter result — copy it by OWN index/length so
       // a NON-array carrier, an OWN poisoned iterator, or a throwing own-index getter fails closed here
       // rather than returning a live array whose getters could throw raw PHI at the caller's read.
-      const copiedSpans = intrinsicCopy<DetectedSpan>(safeRead(normalized, "spans"));
+      const copiedSpans = intrinsicCopy<DetectedSpan>(
+        safeRead(normalized, "spans"),
+      );
       if (copiedSpans === null) {
         return null;
       }

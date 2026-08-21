@@ -19,7 +19,10 @@
  * It does NOT defend against a first-party consumer replacing JS global intrinsics — out of scope.
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { ReversalRecordInput, ReversalWriteStore } from "../../core/contracts";
+import type {
+  ReversalRecordInput,
+  ReversalWriteStore,
+} from "../../core/contracts";
 import type {
   DictionaryVersion,
   MatterId,
@@ -29,7 +32,13 @@ import type {
 import { ReversalFailedError } from "../errors";
 import { buildReversalAad, MATTER_EXPIRES_AT } from "./aad";
 import { bytesEqual, DEK_BYTES, gcmDecrypt, gcmEncrypt } from "./envelope";
-import { dekBindingDigestOf, dekGenerationIdOf, idempotencyKeyOf, mappingKeyOf, scopeDigestOf } from "./keys";
+import {
+  dekBindingDigestOf,
+  dekGenerationIdOf,
+  idempotencyKeyOf,
+  mappingKeyOf,
+  scopeDigestOf,
+} from "./keys";
 import type {
   DekMaterial,
   DurableReversalStoreDependencies,
@@ -84,7 +93,9 @@ export class DurableReversalStore implements ReversalWriteStore {
   // enumerable at runtime under ES2022) — downgrading it to TS-private is `MUT-TS-PRIVATE-DEK-CACHE`.
   readonly #keyProvider: KeyProvider;
   readonly #spool: SpoolVolume;
-  readonly #classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;
+  readonly #classifyRetention: (
+    input: RetentionClassificationInput,
+  ) => Promise<ReversalRetentionClass>;
   readonly #nowEpochMilliseconds: () => number;
   readonly #dekCache = new Map<string, DekCacheEntry>();
   readonly #dekCacheMaxEntries: number;
@@ -95,13 +106,27 @@ export class DurableReversalStore implements ReversalWriteStore {
   #dekCacheExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(dependencies: DurableReversalStoreDependencies) {
-    const internalDependencies = dependencies as DurableReversalStoreInternalDependencies;
-    const maxEntries = internalDependencies.dekCacheOptions?.maxEntries ?? DEFAULT_DEK_CACHE_MAX_ENTRIES;
-    const ttlMs = internalDependencies.dekCacheOptions?.ttlMs ?? DEFAULT_DEK_CACHE_TTL_MS;
-    if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > DEFAULT_DEK_CACHE_MAX_ENTRIES) {
-      throw new RangeError("dek_cache_max_entries_must_be_between_zero_and_default");
+    const internalDependencies =
+      dependencies as DurableReversalStoreInternalDependencies;
+    const maxEntries =
+      internalDependencies.dekCacheOptions?.maxEntries ??
+      DEFAULT_DEK_CACHE_MAX_ENTRIES;
+    const ttlMs =
+      internalDependencies.dekCacheOptions?.ttlMs ?? DEFAULT_DEK_CACHE_TTL_MS;
+    if (
+      !Number.isSafeInteger(maxEntries) ||
+      maxEntries < 0 ||
+      maxEntries > DEFAULT_DEK_CACHE_MAX_ENTRIES
+    ) {
+      throw new RangeError(
+        "dek_cache_max_entries_must_be_between_zero_and_default",
+      );
     }
-    if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > DEFAULT_DEK_CACHE_TTL_MS) {
+    if (
+      !Number.isFinite(ttlMs) ||
+      ttlMs < 0 ||
+      ttlMs > DEFAULT_DEK_CACHE_TTL_MS
+    ) {
       throw new RangeError("dek_cache_ttl_ms_must_be_between_zero_and_default");
     }
     this.#keyProvider = dependencies.keyProvider;
@@ -110,9 +135,11 @@ export class DurableReversalStore implements ReversalWriteStore {
     this.#nowEpochMilliseconds = dependencies.nowEpochMilliseconds;
     this.#dekCacheMaxEntries = maxEntries;
     this.#dekCacheTtlMs = ttlMs;
-    this.#weakReferenceFactory = internalDependencies.dekCacheOptions?.weakReferenceFactoryForTesting
-      ?? ((store) => new WeakRef(store));
-    this.maximumEncounteredTokenBatch = dependencies.maximumEncounteredTokenBatch;
+    this.#weakReferenceFactory =
+      internalDependencies.dekCacheOptions?.weakReferenceFactoryForTesting ??
+      ((store) => new WeakRef(store));
+    this.maximumEncounteredTokenBatch =
+      dependencies.maximumEncounteredTokenBatch;
   }
 
   /**
@@ -136,7 +163,11 @@ export class DurableReversalStore implements ReversalWriteStore {
 
       // Retention is a property of the OPERATION (attemptId), from trusted context — never inferred
       // from token/matter shape (addendum C3). Unknown/throwing → fail closed.
-      const retentionClass = await this.#classifyRetention({ tenantId, matterId, attemptId });
+      const retentionClass = await this.#classifyRetention({
+        tenantId,
+        matterId,
+        attemptId,
+      });
       if (retentionClass !== "matter" && retentionClass !== "detector-only") {
         throw new ReversalFailedError();
       }
@@ -144,22 +175,39 @@ export class DurableReversalStore implements ReversalWriteStore {
       // Captured ONCE before PREPARE (§6, roadmap D5).
       const createdAtEpochMs = this.#nowEpochMilliseconds();
       const expiresAtEpochMs =
-        retentionClass === "detector-only" ? BigInt(createdAtEpochMs) + DETECTOR_TTL_MS : MATTER_EXPIRES_AT;
+        retentionClass === "detector-only"
+          ? BigInt(createdAtEpochMs) + DETECTOR_TTL_MS
+          : MATTER_EXPIRES_AT;
 
-      const scope: WrappingKeyScope = { tenantId, matterId, purpose: "reversal-v1" };
+      const scope: WrappingKeyScope = {
+        tenantId,
+        matterId,
+        purpose: "reversal-v1",
+      };
       const keyHandle = await this.#keyProvider.getWrappingKey(scope);
       const dekGeneration = await this.#spool.ensureDekGeneration({
         scope,
         mint: async () => {
           const freshDek = randomBytes(DEK_BYTES) as unknown as DekMaterial;
           const bindingDigest = dekBindingDigestOf(scope, keyHandle);
-          const wrappedDek = await this.#keyProvider.wrap({ scope, key: keyHandle, dek: freshDek, bindingDigest });
+          const wrappedDek = await this.#keyProvider.wrap({
+            scope,
+            key: keyHandle,
+            dek: freshDek,
+            bindingDigest,
+          });
           return { dekGenerationId: dekGenerationIdOf(scope), wrappedDek };
         },
       });
       // Always encrypt under the WINNING durable generation's DEK (recovered by unwrapping its wrapped
       // form), so a lost mint race can never encrypt under a stale key.
-      const dek = await this.#unwrapDek(scope, keyHandle, dekGeneration.dekGenerationId, dekGeneration.wrappedDek, keyHandle.keyVersion);
+      const dek = await this.#unwrapDek(
+        scope,
+        keyHandle,
+        dekGeneration.dekGenerationId,
+        dekGeneration.wrappedDek,
+        keyHandle.keyVersion,
+      );
 
       const nonce = await this.#spool.reserveNonce({
         tenantId,
@@ -180,7 +228,12 @@ export class DurableReversalStore implements ReversalWriteStore {
         wrappingKeyVersion: keyHandle.keyVersion,
       });
 
-      const sealed = gcmEncrypt(dek, nonce, aad, Buffer.from(canonical, "utf8"));
+      const sealed = gcmEncrypt(
+        dek,
+        nonce,
+        aad,
+        Buffer.from(canonical, "utf8"),
+      );
 
       const blob: EncryptedReversalRecordBlob = {
         ciphertext: sealed.ciphertext,
@@ -191,11 +244,25 @@ export class DurableReversalStore implements ReversalWriteStore {
         wrappingKeyId: keyHandle.keyId,
         wrappingKeyVersion: keyHandle.keyVersion,
         aad,
-        meta: { tenantId, matterId, dictionaryVersion, token, attemptId, retentionClass, createdAtEpochMs, expiresAtEpochMs },
+        meta: {
+          tenantId,
+          matterId,
+          dictionaryVersion,
+          token,
+          attemptId,
+          retentionClass,
+          createdAtEpochMs,
+          expiresAtEpochMs,
+        },
       };
 
       const idempotencyKey = idempotencyKeyOf(tenantId, attemptId, token);
-      const mappingKey = mappingKeyOf(tenantId, matterId, dictionaryVersion, token);
+      const mappingKey = mappingKeyOf(
+        tenantId,
+        matterId,
+        dictionaryVersion,
+        token,
+      );
       const scopeDigest = scopeDigestOf(tenantId, matterId, dictionaryVersion);
 
       const prepared = await this.#spool.prepare({
@@ -209,7 +276,10 @@ export class DurableReversalStore implements ReversalWriteStore {
       if (published.kind === "existing") {
         // First-write-wins. A same-attempt replay whose associated scope diverges is rejected and
         // NEVER creates a second mapping (§3.1.3).
-        if ((published.immutableScopeDigest as unknown as string) !== (scopeDigest as unknown as string)) {
+        if (
+          (published.immutableScopeDigest as unknown as string) !==
+          (scopeDigest as unknown as string)
+        ) {
           throw new ReversalFailedError();
         }
         // A same-attempt replay after detector expiry is non-retryable — the tombstone stands (§6).
@@ -278,7 +348,12 @@ export class DurableReversalStore implements ReversalWriteStore {
 
       const keyToToken = new Map<string, SubstitutionToken>();
       const requests = distinct.map((token) => {
-        const mappingKey = mappingKeyOf(tenantId, matterId, dictionaryVersion, token);
+        const mappingKey = mappingKeyOf(
+          tenantId,
+          matterId,
+          dictionaryVersion,
+          token,
+        );
         keyToToken.set(mappingKey as unknown as string, token);
         // Exact, TENANT-SCOPED key only. There is NO tenantless fallback (MUT-FALLBACK-TENANTLESS-LOOKUP).
         return { mappingKey };
@@ -291,7 +366,14 @@ export class DurableReversalStore implements ReversalWriteStore {
         if (token === undefined) {
           continue;
         }
-        const canonical = await this.#openRecord(tenantId, matterId, dictionaryVersion, token, result.encryptedRecord, nowEpochMs);
+        const canonical = await this.#openRecord(
+          tenantId,
+          matterId,
+          dictionaryVersion,
+          token,
+          result.encryptedRecord,
+          nowEpochMs,
+        );
         if (canonical !== undefined) {
           resolved.set(token, canonical);
         }
@@ -341,14 +423,34 @@ export class DurableReversalStore implements ReversalWriteStore {
     if (BigInt(nowEpochMs) >= blob.meta.expiresAtEpochMs) {
       return undefined;
     }
-    const scope: WrappingKeyScope = { tenantId, matterId, purpose: "reversal-v1" };
-    const keyHandle: WrappingKeyHandle = { keyId: blob.wrappingKeyId, keyVersion: blob.wrappingKeyVersion, scope };
-    const dek = await this.#unwrapDek(scope, keyHandle, blob.dekGenerationId, blob.wrappedDek, blob.wrappingKeyVersion);
+    const scope: WrappingKeyScope = {
+      tenantId,
+      matterId,
+      purpose: "reversal-v1",
+    };
+    const keyHandle: WrappingKeyHandle = {
+      keyId: blob.wrappingKeyId,
+      keyVersion: blob.wrappingKeyVersion,
+      scope,
+    };
+    const dek = await this.#unwrapDek(
+      scope,
+      keyHandle,
+      blob.dekGenerationId,
+      blob.wrappedDek,
+      blob.wrappingKeyVersion,
+    );
     let plaintext: Uint8Array;
     try {
       // GCM verifies the reconstructed AAD + tag: a one-bit ciphertext/tag/AAD change throws
       // (MUT-IGNORE-GCM-TAG returns plaintext here instead).
-      plaintext = gcmDecrypt(dek, blob.nonce, expectedAad, blob.ciphertext, blob.authTag);
+      plaintext = gcmDecrypt(
+        dek,
+        blob.nonce,
+        expectedAad,
+        blob.ciphertext,
+        blob.authTag,
+      );
     } catch {
       throw new ReversalFailedError();
     }
@@ -371,7 +473,10 @@ export class DurableReversalStore implements ReversalWriteStore {
     wrappingKeyVersion: string,
   ): Promise<Uint8Array> {
     const cacheKey = createHash("sha256")
-      .update(`${scope.tenantId}\0${scope.matterId}\0${dekGenerationId}\0${wrappingKeyVersion}\0${keyHandle.keyId}\0`, "utf8")
+      .update(
+        `${scope.tenantId}\0${scope.matterId}\0${dekGenerationId}\0${wrappingKeyVersion}\0${keyHandle.keyId}\0`,
+        "utf8",
+      )
       .update(wrappedDek as unknown as Uint8Array)
       .digest("hex");
     const nowEpochMs = this.#nowEpochMilliseconds();
@@ -386,7 +491,12 @@ export class DurableReversalStore implements ReversalWriteStore {
       return Buffer.from(cached.bytes);
     }
     const bindingDigest = dekBindingDigestOf(scope, keyHandle);
-    const dek = await this.#keyProvider.unwrap({ scope, key: keyHandle, wrappedDek, bindingDigest });
+    const dek = await this.#keyProvider.unwrap({
+      scope,
+      key: keyHandle,
+      wrappedDek,
+      bindingDigest,
+    });
     if ((dek as Uint8Array).byteLength !== DEK_BYTES) {
       throw new ReversalFailedError();
     }

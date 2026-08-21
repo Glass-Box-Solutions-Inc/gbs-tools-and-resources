@@ -29,7 +29,11 @@ export type IdentifierClass =
 
 /** A total count record: every IdentifierClass key is present, including zeroes. */
 export type IdentifierCounts = Readonly<Record<IdentifierClass, number>>;
-export type AiOperation = "generation" | "stream" | "embedding" | "graph_extraction";
+export type AiOperation =
+  | "generation"
+  | "stream"
+  | "embedding"
+  | "graph_extraction";
 
 /** Trusted, opaque request/job identity. It contains no caller-controlled policy switch. */
 export interface MatterAiContext {
@@ -106,7 +110,11 @@ export interface SubstitutionResult {
   readonly counts: IdentifierCounts;
   readonly ambiguityCount: number;
   readonly detector: Readonly<{ name: string; version: string }> | null;
-  readonly latencyMs: Readonly<{ dictionary: number; detector: number; total: number }>;
+  readonly latencyMs: Readonly<{
+    dictionary: number;
+    detector: number;
+    total: number;
+  }>;
   readonly reversalHandle: ReversalHandle;
 }
 
@@ -147,18 +155,22 @@ export interface PhiEngineError extends Error {
   readonly code: PhiEngineFailureCode;
   readonly operationId: OperationId;
   /** Always safe fixed metadata; never text, values, variants, excerpts, or maps. */
-  readonly safeDetails: Readonly<Record<string, string | number | boolean | null>>;
+  readonly safeDetails: Readonly<
+    Record<string, string | number | boolean | null>
+  >;
 }
 
 /** The only legal reversal lookup: distinct, validated tokens encountered in one response. */
 export interface ReversalStore {
   readonly maximumEncounteredTokenBatch: number;
-  resolveEncounteredTokens(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    tokens: readonly SubstitutionToken[];
-  }>): Promise<ReadonlyMap<SubstitutionToken, string>>;
+  resolveEncounteredTokens(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      tokens: readonly SubstitutionToken[];
+    }>,
+  ): Promise<ReadonlyMap<SubstitutionToken, string>>;
 }
 
 /**

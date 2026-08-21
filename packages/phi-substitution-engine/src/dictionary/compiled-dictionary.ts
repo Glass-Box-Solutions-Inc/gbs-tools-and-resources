@@ -84,7 +84,10 @@ export class AhoCorasickCompiledDictionary implements CompiledDictionary {
     for (const entry of init.entries) {
       byId.set(entry.patternId, entry);
       // Token identity is 1:1 with a subject+role; canonical is the subject's.
-      byToken.set(entry.token as unknown as string, entry.canonicalDisplayValue);
+      byToken.set(
+        entry.token as unknown as string,
+        entry.canonicalDisplayValue,
+      );
     }
     this.entriesById = byId;
     this.canonicalByToken = byToken;
@@ -122,7 +125,11 @@ export class AhoCorasickCompiledDictionary implements CompiledDictionary {
         suffixMode: entry.suffixMode,
         boundaryMode: entry.boundaryMode,
       };
-      out.push({ startUtf16: span.startUtf16, endUtf16: span.endUtf16, candidate });
+      out.push({
+        startUtf16: span.startUtf16,
+        endUtf16: span.endUtf16,
+        candidate,
+      });
     }
     return out;
   }

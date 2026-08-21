@@ -29,7 +29,10 @@ export class SentinelSourceTokenEscaper implements SourceTokenEscaper {
   escape(
     source: string,
     policy: TokenGrammarPolicy,
-  ): Readonly<{ text: EscapedSourceText; literals: readonly EscapedTokenLiteral[] }> {
+  ): Readonly<{
+    text: EscapedSourceText;
+    literals: readonly EscapedTokenLiteral[];
+  }> {
     const spans = this.grammar.scan(source, policy);
     const literals: EscapedTokenLiteral[] = [];
     let out = "";

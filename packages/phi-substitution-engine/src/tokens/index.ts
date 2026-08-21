@@ -11,16 +11,20 @@ import type {
 import { BracketTokenGrammar, frozenRoleSet } from "./grammar";
 import { InMemoryTokenAssignmentStore } from "./assignment-store";
 import { SentinelSourceTokenEscaper } from "./escaper";
-import {
-  AtomicTokenReverser,
-  InMemoryReversalStore,
-  InProcessReversalHandle,
-} from "./reversal";
+import { AtomicTokenReverser, InMemoryReversalStore } from "./reversal";
 import { HoldbackReverseStreamFactory } from "./reverse-stream";
 
-export { BracketTokenGrammar, frozenRoleSet, type TokenSpanParse } from "./grammar";
+export {
+  BracketTokenGrammar,
+  frozenRoleSet,
+  type TokenSpanParse,
+} from "./grammar";
 export { InMemoryTokenAssignmentStore } from "./assignment-store";
-export { SentinelSourceTokenEscaper, SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
+export {
+  SentinelSourceTokenEscaper,
+  SENTINEL_OPEN,
+  SENTINEL_CLOSE,
+} from "./escaper";
 export {
   AtomicTokenReverser,
   InMemoryReversalStore,

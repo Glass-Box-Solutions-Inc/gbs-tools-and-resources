@@ -34,8 +34,13 @@ const CLOSE = "]]";
  *    `Object.prototype`, or import-order tampering. `__proto__`/`constructor` as role names resolve
  *    to own data properties (or `undefined`), never to inherited members. No live `Set` is retained.
  */
-export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole> {
-  const membership: Record<string, true> = Object.create(null) as Record<string, true>;
+export function frozenRoleSet(
+  roles: Iterable<TokenRole>,
+): ReadonlySet<TokenRole> {
+  const membership: Record<string, true> = Object.create(null) as Record<
+    string,
+    true
+  >;
   const list: TokenRole[] = [];
   for (const role of roles) {
     if (membership[role as unknown as string] !== true) {
@@ -45,9 +50,11 @@ export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole
   }
   Object.freeze(membership); // closure-private; never exposed; no [[SetData]], null prototype
   const frozenList: readonly TokenRole[] = Object.freeze(list);
-  const iterate = (): IterableIterator<TokenRole> => frozenList[Symbol.iterator]();
+  const iterate = (): IterableIterator<TokenRole> =>
+    frozenList[Symbol.iterator]();
   const result: ReadonlySet<TokenRole> = Object.freeze({
-    has: (value: TokenRole): boolean => membership[value as unknown as string] === true,
+    has: (value: TokenRole): boolean =>
+      membership[value as unknown as string] === true,
     get size(): number {
       return frozenList.length;
     },
@@ -57,10 +64,15 @@ export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole
       for (const role of frozenList) yield [role, role];
     },
     forEach(
-      callbackfn: (value: TokenRole, value2: TokenRole, set: ReadonlySet<TokenRole>) => void,
+      callbackfn: (
+        value: TokenRole,
+        value2: TokenRole,
+        set: ReadonlySet<TokenRole>,
+      ) => void,
       thisArg?: unknown,
     ): void {
-      for (const role of frozenList) callbackfn.call(thisArg, role, role, result);
+      for (const role of frozenList)
+        callbackfn.call(thisArg, role, role, result);
     },
     [Symbol.iterator]: iterate,
   });
@@ -68,24 +80,38 @@ export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole
 }
 
 /** Spans returned by `scan` are always token-like: valid or malformed, never `not_token`. */
-export type TokenSpanParse = Exclude<ParsedToken, Readonly<{ kind: "not_token" }>>;
+export type TokenSpanParse = Exclude<
+  ParsedToken,
+  Readonly<{ kind: "not_token" }>
+>;
 
 function asToken(value: string): SubstitutionToken {
   return value as SubstitutionToken;
 }
 
-function classifyInner(inner: string, policy: TokenGrammarPolicy): TokenSpanParse {
+function classifyInner(
+  inner: string,
+  policy: TokenGrammarPolicy,
+): TokenSpanParse {
   if (inner.length === 0) {
     return { kind: "malformed", reason: "BAD_DELIMITER" };
   }
-  if (inner.length + OPEN.length + CLOSE.length > policy.maximumTokenUtf16Length) {
+  if (
+    inner.length + OPEN.length + CLOSE.length >
+    policy.maximumTokenUtf16Length
+  ) {
     return { kind: "malformed", reason: "OVERLONG" };
   }
   const roles = policy.allowedRoles as ReadonlySet<string>;
 
   // Exact role → bare token (sequence 1, rendered without a suffix).
   if (inner.length <= policy.maximumRoleUtf16Length && roles.has(inner)) {
-    return { kind: "valid", token: asToken(`${OPEN}${inner}${CLOSE}`), role: inner as TokenRole, sequence: null };
+    return {
+      kind: "valid",
+      token: asToken(`${OPEN}${inner}${CLOSE}`),
+      role: inner as TokenRole,
+      sequence: null,
+    };
   }
 
   // Trailing `_<digits>` with an allow-listed role prefix → sequenced token.
@@ -98,7 +124,11 @@ function classifyInner(inner: string, policy: TokenGrammarPolicy): TokenSpanPars
         return { kind: "malformed", reason: "BAD_SEQUENCE" };
       }
       const sequence = Number(digits);
-      if (!Number.isSafeInteger(sequence) || sequence < 2 || sequence > policy.maximumSequence) {
+      if (
+        !Number.isSafeInteger(sequence) ||
+        sequence < 2 ||
+        sequence > policy.maximumSequence
+      ) {
         return { kind: "malformed", reason: "BAD_SEQUENCE" };
       }
       return {
@@ -128,14 +158,22 @@ export class BracketTokenGrammar implements TokenGrammar {
     return classifyInner(inner, policy);
   }
 
-  format(role: TokenRole, sequence: number | null, policy: TokenGrammarPolicy): SubstitutionToken {
+  format(
+    role: TokenRole,
+    sequence: number | null,
+    policy: TokenGrammarPolicy,
+  ): SubstitutionToken {
     if (!(policy.allowedRoles as ReadonlySet<string>).has(role)) {
       throw new Error("token_grammar_unknown_role");
     }
     if (sequence === null || sequence === 1) {
       return asToken(`${OPEN}${role}${CLOSE}`);
     }
-    if (!Number.isSafeInteger(sequence) || sequence < 2 || sequence > policy.maximumSequence) {
+    if (
+      !Number.isSafeInteger(sequence) ||
+      sequence < 2 ||
+      sequence > policy.maximumSequence
+    ) {
       throw new Error("token_grammar_bad_sequence");
     }
     return asToken(`${OPEN}${role}_${sequence}${CLOSE}`);
@@ -144,8 +182,16 @@ export class BracketTokenGrammar implements TokenGrammar {
   scan(
     text: string,
     policy: TokenGrammarPolicy,
-  ): readonly Readonly<{ startUtf16: number; endUtf16: number; parsed: TokenSpanParse }>[] {
-    const spans: { startUtf16: number; endUtf16: number; parsed: TokenSpanParse }[] = [];
+  ): readonly Readonly<{
+    startUtf16: number;
+    endUtf16: number;
+    parsed: TokenSpanParse;
+  }>[] {
+    const spans: {
+      startUtf16: number;
+      endUtf16: number;
+      parsed: TokenSpanParse;
+    }[] = [];
     let i = 0;
     while (i < text.length) {
       const open = text.indexOf(OPEN, i);

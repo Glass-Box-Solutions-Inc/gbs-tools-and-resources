@@ -15,10 +15,11 @@ export interface PhileasServiceAdapterConfig {
   readonly baseUrl: string;
   readonly maximumRequestBytes: number;
   readonly requestTimeoutMs: number;
-  readonly expectedDescriptor: DetectorArtifactDescriptor & Readonly<{
-    name: "phileas-4-gliner";
-    localProcessing: true;
-  }>;
+  readonly expectedDescriptor: DetectorArtifactDescriptor &
+    Readonly<{
+      name: "phileas-4-gliner";
+      localProcessing: true;
+    }>;
 }
 
 export type PhileasWireRequest =
@@ -61,7 +62,10 @@ export type PhileasWireResponse =
 export interface BodyLoggingDisabledHttpClient {
   /** The implementation's observability hooks must accept metadata only, never body or headers. */
   postJson(
-    path: "/internal/v1/detect" | "/internal/v1/apply-replacements" | "/internal/v1/policies",
+    path:
+      | "/internal/v1/detect"
+      | "/internal/v1/apply-replacements"
+      | "/internal/v1/policies",
     body: unknown,
     signal: AbortSignal,
   ): Promise<unknown>;
@@ -72,17 +76,29 @@ export interface BodyLoggingDisabledHttpClient {
 export declare class PhileasServiceAdapter
   implements DetectorRedactorPort, PreparedDetectorPolicyCompiler
 {
-  readonly descriptor: DetectorArtifactDescriptor & Readonly<{
-    name: "phileas-4-gliner";
-    localProcessing: true;
-  }>;
+  readonly descriptor: DetectorArtifactDescriptor &
+    Readonly<{
+      name: "phileas-4-gliner";
+      localProcessing: true;
+    }>;
 
-  constructor(config: PhileasServiceAdapterConfig, http: BodyLoggingDisabledHttpClient);
+  constructor(
+    config: PhileasServiceAdapterConfig,
+    http: BodyLoggingDisabledHttpClient,
+  );
 
-  detect(input: DetectorInput, signal: AbortSignal): Promise<readonly RawDetectedSpan[]>;
-  redact(input: DetectorRedactionRequest, signal: AbortSignal): Promise<DetectorRedactionResult>;
+  detect(
+    input: DetectorInput,
+    signal: AbortSignal,
+  ): Promise<readonly RawDetectedSpan[]>;
+  redact(
+    input: DetectorRedactionRequest,
+    signal: AbortSignal,
+  ): Promise<DetectorRedactionResult>;
   health(): Promise<"ready" | "degraded" | "unavailable">;
-  prepare(input: Parameters<PreparedDetectorPolicyCompiler["prepare"]>[0]): Promise<PreparedPolicyRef>;
+  prepare(
+    input: Parameters<PreparedDetectorPolicyCompiler["prepare"]>[0],
+  ): Promise<PreparedPolicyRef>;
   evict(ref: PreparedPolicyRef): Promise<void>;
 }
 

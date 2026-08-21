@@ -15,34 +15,46 @@ describe("phase-1 dictionary compiler, cache, versioning, and orchestration", ()
   });
 
   it("SEC-L2-02 / M-L2-SERVE-OLD-WHILE-BUILDING: old READY version cannot serve", async () => {
-    const r = await loadDictionaryHarness().run("M-L2-SERVE-OLD-WHILE-BUILDING", {
-      active: { version: "8", status: "BUILDING" },
-      prior: { version: "7", status: "READY" },
-    });
+    const r = await loadDictionaryHarness().run(
+      "M-L2-SERVE-OLD-WHILE-BUILDING",
+      {
+        active: { version: "8", status: "BUILDING" },
+        prior: { version: "7", status: "READY" },
+      },
+    );
     expectFailedClosed(r, "DICTIONARY_NOT_READY");
   });
 
   it("SEC-N4-01 / M-N4-RAW-FALLBACK-DICTIONARY: dictionary outage never invokes raw provider", async () => {
-    const r = await loadDictionaryHarness().run("M-N4-RAW-FALLBACK-DICTIONARY", {
-      dictionaryHealth: "unavailable",
-      rawText: "Maria García MRN-A7719",
-    });
+    const r = await loadDictionaryHarness().run(
+      "M-N4-RAW-FALLBACK-DICTIONARY",
+      {
+        dictionaryHealth: "unavailable",
+        rawText: "Maria García MRN-A7719",
+      },
+    );
     expectFailedClosed(r, "DICTIONARY_UNAVAILABLE");
   });
 
   it("SEC-N4-02 / M-N4-MISSING-CONTEXT-MEANS-OFF: missing trusted policy fails closed", async () => {
-    const r = await loadDictionaryHarness().run("M-N4-MISSING-CONTEXT-MEANS-OFF", {
-      context: null,
-      callerPhiFlag: false,
-    });
+    const r = await loadDictionaryHarness().run(
+      "M-N4-MISSING-CONTEXT-MEANS-OFF",
+      {
+        context: null,
+        callerPhiFlag: false,
+      },
+    );
     expectFailedClosed(r, "MISSING_TRUSTED_CONTEXT");
   });
 
   it("SEC-L8-01 / M-L8-DROP-TENANT-FROM-CACHE-KEY: compiled cache is tenant isolated", async () => {
-    const r = await loadDictionaryHarness().run("M-L8-DROP-TENANT-FROM-CACHE-KEY", {
-      tenantA: { matter: "same-id", version: "4", value: "Maria García" },
-      tenantB: { matter: "same-id", version: "4", value: "Robert O'Neil" },
-    });
+    const r = await loadDictionaryHarness().run(
+      "M-L8-DROP-TENANT-FROM-CACHE-KEY",
+      {
+        tenantA: { matter: "same-id", version: "4", value: "Maria García" },
+        tenantB: { matter: "same-id", version: "4", value: "Robert O'Neil" },
+      },
+    );
     expectNoCanary(r.providerPayloads);
     expect(r.metrics.crossTenantCacheHit).toBe(false);
   });
@@ -59,11 +71,18 @@ describe("phase-1 dictionary compiler, cache, versioning, and orchestration", ()
   });
 
   it("SEC-L12-01 / M-L12-DETECTOR-OVERRIDES-DICTIONARY: exact dictionary identity wins", async () => {
-    const r = await loadDictionaryHarness().run("M-L12-DETECTOR-OVERRIDES-DICTIONARY", {
-      text: "Maria García appeared.",
-      dictionary: { span: [0, 12], token: "[[Claimant]]" },
-      detector: { span: [0, 12], token: "[[Detected_Person_1]]", confidence: 0.99 },
-    });
+    const r = await loadDictionaryHarness().run(
+      "M-L12-DETECTOR-OVERRIDES-DICTIONARY",
+      {
+        text: "Maria García appeared.",
+        dictionary: { span: [0, 12], token: "[[Claimant]]" },
+        detector: {
+          span: [0, 12],
+          token: "[[Detected_Person_1]]",
+          confidence: 0.99,
+        },
+      },
+    );
     expect(r.tokenizedText).toBe("[[Claimant]] appeared.");
     expect(r.reversedText).toBe("Maria García appeared.");
   });

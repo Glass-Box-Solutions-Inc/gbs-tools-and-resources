@@ -24,7 +24,11 @@ export type PreparedControlPlaneState =
   | "reclaim_marked"
   | "quarantined";
 
-export type ClaimControlPlaneState = "pending" | "flushed" | "expired" | "superseded";
+export type ClaimControlPlaneState =
+  | "pending"
+  | "flushed"
+  | "expired"
+  | "superseded";
 
 export interface InsertPreparedUploadingInput {
   readonly preparedBlobId: PreparedWriteHandle;
@@ -52,18 +56,20 @@ export interface PublishPreparedInput {
   readonly nowEpochMilliseconds: number;
 }
 
-export type FlushClaimInput = Readonly<{
-  readonly commit: PublishedCommitHandle;
-  readonly nowEpochMilliseconds: number;
-} & (
-  | {
-      readonly kind?: "blob";
-      /** HEAD attributes read by the blob-plane adapter immediately before this call. */
-      readonly blobEtag: string;
-      readonly blobLength: bigint;
-    }
-  | { readonly kind: "stale-flushed" | "superseded" }
-)>;
+export type FlushClaimInput = Readonly<
+  {
+    readonly commit: PublishedCommitHandle;
+    readonly nowEpochMilliseconds: number;
+  } & (
+    | {
+        readonly kind?: "blob";
+        /** HEAD attributes read by the blob-plane adapter immediately before this call. */
+        readonly blobEtag: string;
+        readonly blobLength: bigint;
+      }
+    | { readonly kind: "stale-flushed" | "superseded" }
+  )
+>;
 
 export interface ExpirePendingDetachInput {
   readonly commit: PublishedCommitHandle;
@@ -195,14 +201,20 @@ export interface ControlPlane {
   insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void>;
   markFinalized(input: MarkFinalizedInput): Promise<void>;
   publish(input: PublishPreparedInput): Promise<PublishReversalResult>;
-  readClaimBlobReference(commit: PublishedCommitHandle): Promise<ClaimBlobReference>;
+  readClaimBlobReference(
+    commit: PublishedCommitHandle,
+  ): Promise<ClaimBlobReference>;
   flushClaim(input: FlushClaimInput): Promise<void>;
   /** Returns true for an existing/just-created tombstone, false when the claim is not yet expired. */
   expirePendingDetach(input: ExpirePendingDetachInput): Promise<boolean>;
-  readCurrentPointers(mappingKeys: readonly ReversalMappingKey[]): Promise<readonly CurrentPointerRow[]>;
+  readCurrentPointers(
+    mappingKeys: readonly ReversalMappingKey[],
+  ): Promise<readonly CurrentPointerRow[]>;
 
   /** Path 1, including age-independent recovery of rows already in reclaim_marked. */
-  reclaimFinalizedOrphans(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]>;
+  reclaimFinalizedOrphans(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]>;
   markQuarantined(input: MarkQuarantinedInput): Promise<void>;
 
   /**
@@ -214,18 +226,32 @@ export interface ControlPlane {
   ): Promise<ReclaimFinalizedOrphansSelection>;
 
   /** Path 2a + v5 Path 2b recovery. Files must be absent before completion. */
-  reclaimStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]>;
-  completeStaleUploadReclaim(preparedBlobId: PreparedWriteHandle): Promise<void>;
+  reclaimStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]>;
+  completeStaleUploadReclaim(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void>;
 
   /** Path 2a only: exclusively transition newly stale uploading rows. */
-  markStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]>;
+  markStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]>;
   /** Path 2b only: recover marked rows regardless of their age. */
-  recoverStaleUploads(input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]>;
+  recoverStaleUploads(
+    input: ReclaimLimitInput,
+  ): Promise<readonly ReclaimUploadRow[]>;
 
   /** Path 3 selector; caller deletes Files bytes before completing the row deletion. */
-  hardDeleteQuarantined(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]>;
-  completeHardDeleteQuarantined(preparedBlobId: PreparedWriteHandle): Promise<void>;
+  hardDeleteQuarantined(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]>;
+  completeHardDeleteQuarantined(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void>;
 
   /** Read-only, globally-budgeted preview used by the dry-run reclamation job. */
-  previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome>;
+  previewReclamation(
+    input: ReclaimPreviewInput,
+  ): Promise<ReclaimPreviewOutcome>;
 }

@@ -36,7 +36,10 @@ function requireString(value: unknown): string {
   return typeof value === "string" ? value : invalid();
 }
 
-function requireLiteral<T extends boolean | string>(value: unknown, expected: T): T {
+function requireLiteral<T extends boolean | string>(
+  value: unknown,
+  expected: T,
+): T {
   return value === expected ? expected : invalid();
 }
 
@@ -51,15 +54,25 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function sortedPlanes(input: readonly LoggingPlaneBodyAttestation[]): readonly LoggingPlaneBodyAttestation[] {
+function sortedPlanes(
+  input: readonly LoggingPlaneBodyAttestation[],
+): readonly LoggingPlaneBodyAttestation[] {
   if (!Array.isArray(input)) invalid();
   const copied: LoggingPlaneBodyAttestation[] = [];
   for (let i = 0; i < input.length; i += 1) {
     const candidate = input[i] as unknown;
-    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) invalid();
+    if (
+      candidate === null ||
+      typeof candidate !== "object" ||
+      Array.isArray(candidate)
+    )
+      invalid();
     const plane = requireString((candidate as { plane?: unknown }).plane);
     if (!isAllowedPlane(plane)) invalid();
-    requireLiteral((candidate as { bodyLoggingDisabled?: unknown }).bodyLoggingDisabled, true);
+    requireLiteral(
+      (candidate as { bodyLoggingDisabled?: unknown }).bodyLoggingDisabled,
+      true,
+    );
     copied.push({ plane, bodyLoggingDisabled: true });
   }
   copied.sort((left, right) => compareStrings(left.plane, right.plane));
@@ -116,7 +129,9 @@ function canonicalizeJcs(value: JcsValue, ancestors: Set<object>): string {
       validateUnicode(key);
       const member = (value as Readonly<Record<string, JcsValue>>)[key];
       if (member === undefined) invalid();
-      parts.push(`${JSON.stringify(key)}:${canonicalizeJcs(member, ancestors)}`);
+      parts.push(
+        `${JSON.stringify(key)}:${canonicalizeJcs(member, ancestors)}`,
+      );
     }
     return `{${parts.join(",")}}`;
   } finally {
@@ -132,7 +147,11 @@ function canonicalClaims(input: AzureEgressPolicySignedClaims): JcsValue {
   try {
     const egressPolicyVersion = requireString(input.egressPolicyVersion);
     const enginePolicyVersion = requireString(input.enginePolicyVersion);
-    if (!SAFE_VERSION.test(egressPolicyVersion) || !SHA256_VERSION.test(enginePolicyVersion)) invalid();
+    if (
+      !SAFE_VERSION.test(egressPolicyVersion) ||
+      !SHA256_VERSION.test(enginePolicyVersion)
+    )
+      invalid();
 
     return {
       environment: requireLiteral(input.environment, "cae-gbs-wp"),
@@ -141,9 +160,15 @@ function canonicalClaims(input: AzureEgressPolicySignedClaims): JcsValue {
         input.providerHostsReachableOnlyByProtectedIdentity,
         true,
       ),
-      phileasHasPublicIngress: requireLiteral(input.phileasHasPublicIngress, false),
+      phileasHasPublicIngress: requireLiteral(
+        input.phileasHasPublicIngress,
+        false,
+      ),
       phileasHasGcpRoute: requireLiteral(input.phileasHasGcpRoute, false),
-      requestBodyLoggingDisabled: requireLiteral(input.requestBodyLoggingDisabled, true),
+      requestBodyLoggingDisabled: requireLiteral(
+        input.requestBodyLoggingDisabled,
+        true,
+      ),
       checkedAt: requireString(input.checkedAt),
       deploymentDigest: requireString(input.deploymentDigest),
       imageDigest: requireString(input.imageDigest),
@@ -151,10 +176,12 @@ function canonicalClaims(input: AzureEgressPolicySignedClaims): JcsValue {
       expiresAt: requireString(input.expiresAt),
       nonce: requireString(input.nonce),
       denyByDefaultEgress: requireLiteral(input.denyByDefaultEgress, true),
-      loggingPlanes: sortedPlanes(input.loggingPlanes).map((plane): JcsValue => ({
-        plane: plane.plane,
-        bodyLoggingDisabled: true,
-      })),
+      loggingPlanes: sortedPlanes(input.loggingPlanes).map(
+        (plane): JcsValue => ({
+          plane: plane.plane,
+          bodyLoggingDisabled: true,
+        }),
+      ),
       egressPolicyVersion,
       enginePolicyVersion,
     };
@@ -168,7 +195,9 @@ export function canonicalizeAzureEgressPolicySignedClaims(
   claims: AzureEgressPolicySignedClaims,
 ): Uint8Array {
   try {
-    return new TextEncoder().encode(canonicalizeJcs(canonicalClaims(claims), new Set<object>()));
+    return new TextEncoder().encode(
+      canonicalizeJcs(canonicalClaims(claims), new Set<object>()),
+    );
   } catch {
     return invalid();
   }
@@ -182,7 +211,9 @@ export function computeAzureEgressPolicySignedClaimsDigest(
 }
 
 /** Computes the consumer boot-config digest after its schema has normalized mode and BAA matrix. */
-export function computeEnginePolicyVersion(config: NormalizedEnginePolicyConfiguration): string {
+export function computeEnginePolicyVersion(
+  config: NormalizedEnginePolicyConfiguration,
+): string {
   try {
     if (!SAFE_VERSION.test(requireString(config.engineMode))) invalid();
     const canonical = canonicalizeJcs(

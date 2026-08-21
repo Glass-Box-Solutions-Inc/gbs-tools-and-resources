@@ -51,7 +51,10 @@ export function scopeDigestOf(
   dictionaryVersion: DictionaryVersion,
 ): ReversalScopeDigest {
   const digest = createHash("sha256")
-    .update(`${tenantId}${SEP}${matterId}${SEP}${dictionaryVersion.toString()}`, "utf8")
+    .update(
+      `${tenantId}${SEP}${matterId}${SEP}${dictionaryVersion.toString()}`,
+      "utf8",
+    )
     .digest("hex");
   return digest as unknown as ReversalScopeDigest;
 }
@@ -65,7 +68,10 @@ export function dekGenerationIdOf(scope: WrappingKeyScope): DekGenerationId {
  * Digest binding a DEK wrap to its scope + KEK identity/version. Passed to `KeyProvider.wrap`/`unwrap`
  * so a wrapped DEK cannot be unwrapped under a substituted scope or KEK version (fail closed).
  */
-export function dekBindingDigestOf(scope: WrappingKeyScope, key: WrappingKeyHandle): AadBindingDigest {
+export function dekBindingDigestOf(
+  scope: WrappingKeyScope,
+  key: WrappingKeyHandle,
+): AadBindingDigest {
   const digest = createHash("sha256")
     .update(
       `reversal-dek-wrap-v1${SEP}${scope.tenantId}${SEP}${scope.matterId}${SEP}${scope.purpose}${SEP}${key.keyId}${SEP}${key.keyVersion}`,

@@ -12,6 +12,8 @@ describe("postgresConfigFromEnvironment", () => {
     });
 
     expect(config.ssl).toBe(true);
-    expect(config.ssl).not.toEqual(expect.objectContaining({ rejectUnauthorized: false }));
+    expect(config.ssl).not.toEqual(
+      expect.objectContaining({ rejectUnauthorized: false }),
+    );
   });
 });

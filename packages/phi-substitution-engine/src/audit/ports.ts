@@ -33,7 +33,11 @@ export interface PhiAuditEvent {
   readonly ambiguityCount: number;
   readonly detectorName: string | null;
   readonly detectorVersion: string | null;
-  readonly latencyMs: Readonly<{ dictionary: number; detector: number; total: number }>;
+  readonly latencyMs: Readonly<{
+    dictionary: number;
+    detector: number;
+    total: number;
+  }>;
   readonly outcome: PhiAuditOutcome;
   readonly failureCode: string | null;
   readonly occurredAt: string;
@@ -54,7 +58,11 @@ export interface PhiAuditPreparedRecord {
   readonly ambiguityCount: number;
   readonly detectorName: string | null;
   readonly detectorVersion: string | null;
-  readonly latencyMs: Readonly<{ dictionary: number; detector: number; total: number }>;
+  readonly latencyMs: Readonly<{
+    dictionary: number;
+    detector: number;
+    total: number;
+  }>;
   readonly preparedAt: string;
 }
 
@@ -74,7 +82,9 @@ export interface PhiAuditSerializer {
 
 export interface AuditPrimaryStore {
   /** Returns unavailable rather than treating an outage as successful durability. */
-  prepare(record: PhiAuditPreparedRecord): Promise<
+  prepare(
+    record: PhiAuditPreparedRecord,
+  ): Promise<
     | Readonly<{ status: "stored"; durableRecordId: string }>
     | Readonly<{ status: "already_exists"; durableRecordId: string }>
     | Readonly<{ status: "unavailable"; fixedFailureCode: string }>
@@ -107,8 +117,13 @@ export interface SpoolDrainReport {
  * as a second logical audit event.
  */
 export interface EncryptedAuditSpool {
-  appendPrepared(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt>;
-  finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void>;
+  appendPrepared(
+    record: PhiAuditPreparedRecord,
+  ): Promise<AuditPreparationReceipt>;
+  finalize(
+    receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void>;
   drainTo(primary: AuditPrimaryStore): Promise<SpoolDrainReport>;
   inspectEnvelope(recordId: string): Promise<EncryptedSpoolEnvelope>;
   health(): Promise<"ready" | "unavailable">;
@@ -121,6 +136,12 @@ export interface PhiAuditEmitter {
    */
   prepare(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt>;
   /** Finalizes the same logical attempt once. A crash reconciles to unknown_after_send. */
-  finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void>;
-  reconcileUnknownAfterSend(attemptId: OperationAttemptId, occurredAt: string): Promise<void>;
+  finalize(
+    receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void>;
+  reconcileUnknownAfterSend(
+    attemptId: OperationAttemptId,
+    occurredAt: string,
+  ): Promise<void>;
 }

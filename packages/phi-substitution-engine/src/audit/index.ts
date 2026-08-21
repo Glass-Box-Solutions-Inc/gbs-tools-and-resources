@@ -6,5 +6,10 @@ export { Aes256GcmAuditSpool } from "./spool";
 export type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
 export { DurablePhiAuditEmitter } from "./emitter";
 export { PhiAuditedAttemptCoordinator } from "./coordinator";
-export type { AttemptPlan, AttemptPrecondition, AttemptResult, ProviderInvoker } from "./coordinator";
+export type {
+  AttemptPlan,
+  AttemptPrecondition,
+  AttemptResult,
+  ProviderInvoker,
+} from "./coordinator";
 export { preparedToTerminalEvent, safeClockNow } from "./event-factory";

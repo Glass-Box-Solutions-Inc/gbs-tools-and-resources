@@ -32,10 +32,14 @@ export interface AttemptResult {
 
 /** Reads an injected-emitter receipt's `location` ONCE, getter-throw-safe and allow-listed (§7/N2):
  *  a hostile `.location` getter can neither throw a raw PHI error nor smuggle an arbitrary string. */
-function safeDurability(receipt: AuditPreparationReceipt): AuditDurabilityLocation | null {
+function safeDurability(
+  receipt: AuditPreparationReceipt,
+): AuditDurabilityLocation | null {
   try {
     const loc = (receipt as { location?: unknown }).location;
-    return loc === "PRIMARY_STORE" || loc === "ENCRYPTED_LOCAL_SPOOL" ? loc : null;
+    return loc === "PRIMARY_STORE" || loc === "ENCRYPTED_LOCAL_SPOOL"
+      ? loc
+      : null;
   } catch {
     return null;
   }
@@ -56,7 +60,10 @@ export class PhiAuditedAttemptCoordinator {
   readonly #emitter: PhiAuditEmitter;
   readonly #clock: () => string;
 
-  public constructor(emitter: PhiAuditEmitter, clock: () => string = (): string => new Date().toISOString()) {
+  public constructor(
+    emitter: PhiAuditEmitter,
+    clock: () => string = (): string => new Date().toISOString(),
+  ) {
     this.#emitter = emitter;
     this.#clock = clock;
   }
@@ -122,8 +129,15 @@ export class PhiAuditedAttemptCoordinator {
     if (!preconditionOk) {
       // Only a RECOGNIZED fixed failure code may be recorded; a caller-supplied code that is not a
       // known PhiEngineFailureCode (and could carry PHI) is replaced with the fixed fallback.
-      const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
-      const event = preparedToTerminalEvent(prepared, "failed_closed", safeCode, safeClockNow(this.#clock));
+      const safeCode = isPhiEngineFailureCode(rawPreconditionCode)
+        ? rawPreconditionCode
+        : "PRECONDITION_FAILED";
+      const event = preparedToTerminalEvent(
+        prepared,
+        "failed_closed",
+        safeCode,
+        safeClockNow(this.#clock),
+      );
       await this.#finalizeQuietly(receipt, event);
       return {
         outcome: "failed_closed",
@@ -143,8 +157,15 @@ export class PhiAuditedAttemptCoordinator {
       // yields PHI on another, or throws PHI, cannot leak.
       const rawCode = safeCodeString(error);
       const failureCode =
-        rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
-      const failedEvent = preparedToTerminalEvent(prepared, "unknown_after_send", failureCode, safeClockNow(this.#clock));
+        rawCode !== undefined && isPhiEngineFailureCode(rawCode)
+          ? rawCode
+          : "PROVIDER_INVOCATION_FAILED";
+      const failedEvent = preparedToTerminalEvent(
+        prepared,
+        "unknown_after_send",
+        failureCode,
+        safeClockNow(this.#clock),
+      );
       await this.#finalizeQuietly(receipt, failedEvent);
       return {
         outcome: "unknown_after_send",
@@ -153,9 +174,19 @@ export class PhiAuditedAttemptCoordinator {
         durability,
       };
     }
-    const event = preparedToTerminalEvent(prepared, "completed", null, safeClockNow(this.#clock));
+    const event = preparedToTerminalEvent(
+      prepared,
+      "completed",
+      null,
+      safeClockNow(this.#clock),
+    );
     await this.#finalizeQuietly(receipt, event);
-    return { outcome: "completed", errorCode: null, providerInvoked: true, durability };
+    return {
+      outcome: "completed",
+      errorCode: null,
+      providerInvoked: true,
+      durability,
+    };
   }
 
   /**
@@ -164,7 +195,10 @@ export class PhiAuditedAttemptCoordinator {
    * is N4-acceptable (a later drain/reconcile can still deliver it); the fixed-code `AttemptResult`
    * is still returned, and nothing raw escapes.
    */
-  async #finalizeQuietly(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+  async #finalizeQuietly(
+    receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void> {
     try {
       await this.#emitter.finalize(receipt, event);
     } catch {

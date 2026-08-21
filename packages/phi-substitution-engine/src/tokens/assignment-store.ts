@@ -6,7 +6,11 @@ import type {
   TenantId,
   TokenRole,
 } from "../core/brands";
-import type { TokenAssignmentStore, TokenGrammar, TokenGrammarPolicy } from "./ports";
+import type {
+  TokenAssignmentStore,
+  TokenGrammar,
+  TokenGrammarPolicy,
+} from "./ports";
 
 const SEP = String.fromCharCode(0);
 
@@ -72,7 +76,11 @@ export class InMemoryTokenAssignmentStore implements TokenAssignmentStore {
     while (this.#retired.has(this.#retiredKey(roleKey, ordinal))) {
       ordinal += 1;
     }
-    const token = this.#grammar.format(input.role, ordinal === 1 ? null : ordinal, this.#policy);
+    const token = this.#grammar.format(
+      input.role,
+      ordinal === 1 ? null : ordinal,
+      this.#policy,
+    );
     this.#nextOrdinal.set(roleKey, ordinal + 1);
     this.#assigned.set(identityKey, { token, ordinal });
     return token;

@@ -14,7 +14,8 @@ const ENCODING_VERSION = 0x01;
 const VERSION_BYTES = 1;
 const BINDING_DIGEST_BYTES = 32;
 const DEK_BYTES = 32;
-const WRAPPED_PLAINTEXT_BYTES = VERSION_BYTES + BINDING_DIGEST_BYTES + DEK_BYTES;
+const WRAPPED_PLAINTEXT_BYTES =
+  VERSION_BYTES + BINDING_DIGEST_BYTES + DEK_BYTES;
 const VALIDATION_ERROR = "azure_keyvault_key_provider_validation_failed";
 
 function failValidation(): never {
@@ -22,7 +23,11 @@ function failValidation(): never {
 }
 
 function scopesEqual(left: WrappingKeyScope, right: WrappingKeyScope): boolean {
-  return left.tenantId === right.tenantId && left.matterId === right.matterId && left.purpose === right.purpose;
+  return (
+    left.tenantId === right.tenantId &&
+    left.matterId === right.matterId &&
+    left.purpose === right.purpose
+  );
 }
 
 /**
@@ -39,7 +44,11 @@ export class AzureKeyVaultKeyProvider implements KeyProvider {
   }
 
   public getWrappingKey(scope: WrappingKeyScope): Promise<WrappingKeyHandle> {
-    return Promise.resolve({ keyId: this.#client.keyId, keyVersion: this.#client.keyVersion, scope });
+    return Promise.resolve({
+      keyId: this.#client.keyId,
+      keyVersion: this.#client.keyVersion,
+      scope,
+    });
   }
 
   public async wrap(input: WrapDekInput): Promise<WrappedDekMaterial> {
@@ -69,21 +78,33 @@ export class AzureKeyVaultKeyProvider implements KeyProvider {
 
     const plaintext = await this.#client.unwrapKey(input.wrappedDek);
     try {
-      if (plaintext.byteLength !== WRAPPED_PLAINTEXT_BYTES || plaintext[0] !== ENCODING_VERSION) {
+      if (
+        plaintext.byteLength !== WRAPPED_PLAINTEXT_BYTES ||
+        plaintext[0] !== ENCODING_VERSION
+      ) {
         failValidation();
       }
 
-      const embeddedDigest = plaintext.subarray(VERSION_BYTES, VERSION_BYTES + BINDING_DIGEST_BYTES);
+      const embeddedDigest = plaintext.subarray(
+        VERSION_BYTES,
+        VERSION_BYTES + BINDING_DIGEST_BYTES,
+      );
       const digestMatches =
         embeddedDigest.byteLength === input.bindingDigest.byteLength &&
-        timingSafeEqual(Buffer.from(embeddedDigest), Buffer.from(input.bindingDigest));
+        timingSafeEqual(
+          Buffer.from(embeddedDigest),
+          Buffer.from(input.bindingDigest),
+        );
 
       if (!this.#handleMatches(input.scope, input.key) || !digestMatches) {
         // All provider-controlled mismatches expose the same fail-closed error surface.
         failValidation();
       }
 
-      const dek = plaintext.slice(VERSION_BYTES + BINDING_DIGEST_BYTES, WRAPPED_PLAINTEXT_BYTES);
+      const dek = plaintext.slice(
+        VERSION_BYTES + BINDING_DIGEST_BYTES,
+        WRAPPED_PLAINTEXT_BYTES,
+      );
       return dek as unknown as DekMaterial;
     } finally {
       // Defense in depth only: wipe the provider-owned intermediate after copying the caller-owned DEK.

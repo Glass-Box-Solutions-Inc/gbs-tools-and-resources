@@ -45,7 +45,10 @@ export class Utf16SpanNormalizer implements DetectorSpanNormalizer {
       const identifierClass = safeRead(span, "identifierClass");
       const confidence = safeRead(span, "confidence");
 
-      if (detectorVersion === undefined || detectorVersion !== expectedDetectorVersion) {
+      if (
+        detectorVersion === undefined ||
+        detectorVersion !== expectedDetectorVersion
+      ) {
         return { ok: false, reason: "VERSION_MISMATCH" };
       }
       if (id === undefined) {
@@ -61,13 +64,21 @@ export class Utf16SpanNormalizer implements DetectorSpanNormalizer {
       if (offsetEncoding !== "UTF16") {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
-      if (typeof start !== "number" || typeof end !== "number" || !Number.isInteger(start) || !Number.isInteger(end)) {
+      if (
+        typeof start !== "number" ||
+        typeof end !== "number" ||
+        !Number.isInteger(start) ||
+        !Number.isInteger(end)
+      ) {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
       if (start < 0 || end > length || start >= end) {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
-      if (splitsSurrogatePair(originalText, start) || splitsSurrogatePair(originalText, end)) {
+      if (
+        splitsSurrogatePair(originalText, start) ||
+        splitsSurrogatePair(originalText, end)
+      ) {
         return { ok: false, reason: "INVALID_BOUNDARY" };
       }
 

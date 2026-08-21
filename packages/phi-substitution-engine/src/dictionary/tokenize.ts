@@ -13,7 +13,11 @@
  */
 import type { TokenRole, Utf16Offset } from "../core/brands";
 import type { IdentifierClass } from "../core/contracts";
-import type { CompiledDictionaryCache, CompileInput, DictionaryCompiler } from "./contracts";
+import type {
+  CompiledDictionaryCache,
+  CompileInput,
+  DictionaryCompiler,
+} from "./contracts";
 import type { DetectorCollisionSpan } from "../collision/index";
 import {
   Phase1BoundaryRule,
@@ -146,7 +150,9 @@ export function tokenize(
   // all fail closed here rather than throwing raw out of this exported boundary.
   const rawSpans = intrinsicCopy<unknown>(detectorSpans);
   if (rawSpans === null) {
-    throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+    throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, {
+      ambiguityCount: 0,
+    });
   }
   const detectorSpanSnapshot: {
     startUtf16: Utf16Offset;
@@ -165,13 +171,20 @@ export function tokenize(
     const identifierClass = safeRead(span, "identifierClass");
     const confidence = safeRead(span, "confidence");
     const token = safeString(span, "token");
-    if (typeof startUtf16 !== "number" || typeof endUtf16 !== "number" || token === undefined) {
-      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+    if (
+      typeof startUtf16 !== "number" ||
+      typeof endUtf16 !== "number" ||
+      token === undefined
+    ) {
+      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, {
+        ambiguityCount: 0,
+      });
     }
     detectorSpanSnapshot[detectorSpanSnapshot.length] = {
       startUtf16: startUtf16 as Utf16Offset,
       endUtf16: endUtf16 as Utf16Offset,
-      identifierClass: identifierClass as DetectorCollisionSpan["identifierClass"],
+      identifierClass:
+        identifierClass as DetectorCollisionSpan["identifierClass"],
       confidence: confidence as DetectorCollisionSpan["confidence"],
       token,
     };
@@ -216,15 +229,23 @@ export function tokenize(
     const end = num(candidate.endUtf16);
     const token = candidate.candidate.token as unknown as string;
     // N5: reverse to the subject's CURRENT canonical value.
-    const canonical = dictionary.canonicalForToken(token) ?? canonicalize(originalText.slice(start, end));
+    const canonical =
+      dictionary.canonicalForToken(token) ??
+      canonicalize(originalText.slice(start, end));
     spans.push({ start, end, token, canonical });
   }
   for (const span of resolved.selectedDetector) {
     const start = num(span.startUtf16);
     const end = num(span.endUtf16);
     const token =
-      detectorTokenBySpan.get(`${start}:${end}`) ?? `[[${DETECTOR_ROLE[span.identifierClass]}]]`;
-    spans.push({ start, end, token, canonical: canonicalize(originalText.slice(start, end)) });
+      detectorTokenBySpan.get(`${start}:${end}`) ??
+      `[[${DETECTOR_ROLE[span.identifierClass]}]]`;
+    spans.push({
+      start,
+      end,
+      token,
+      canonical: canonicalize(originalText.slice(start, end)),
+    });
   }
 
   // §7/N2 (sink a): EVERY token about to be spliced into the egressed `tokenizedText` must be a
@@ -237,8 +258,13 @@ export function tokenize(
   // sequence, structurally incapable of holding raw PHI. Validate at this single splice chokepoint;
   // anything not grammar-valid fails closed (contained by both callers as a fixed-code failure).
   for (const span of spans) {
-    if (typeof span.token !== "string" || grammar.parse(span.token, policy).kind !== "valid") {
-      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+    if (
+      typeof span.token !== "string" ||
+      grammar.parse(span.token, policy).kind !== "valid"
+    ) {
+      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, {
+        ambiguityCount: 0,
+      });
     }
   }
 

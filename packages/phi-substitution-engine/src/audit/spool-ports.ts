@@ -13,7 +13,10 @@ export interface SpoolVolume {
    * Writes `bytes` under `recordId` atomically and reports whether the durable flush completed.
    * Publication is atomic: a partially written record is never observable.
    */
-  putAtomic(recordId: string, bytes: Uint8Array): Promise<Readonly<{ flushed: boolean }>>;
+  putAtomic(
+    recordId: string,
+    bytes: Uint8Array,
+  ): Promise<Readonly<{ flushed: boolean }>>;
   read(recordId: string): Promise<Uint8Array | null>;
   list(): Promise<readonly string[]>;
   remove(recordId: string): Promise<void>;

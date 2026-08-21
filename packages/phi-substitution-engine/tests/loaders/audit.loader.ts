@@ -8,8 +8,15 @@ import type {
   TenantId,
 } from "../../src/core/brands";
 import type { AiOperation, IdentifierClass } from "../../src/core/contracts";
-import type { AuditPrimaryStore, PhiAuditEvent, PhiAuditPreparedRecord } from "../../src/audit/ports";
-import type { SpoolKeyProvider, SpoolVolume } from "../../src/audit/spool-ports";
+import type {
+  AuditPrimaryStore,
+  PhiAuditEvent,
+  PhiAuditPreparedRecord,
+} from "../../src/audit/ports";
+import type {
+  SpoolKeyProvider,
+  SpoolVolume,
+} from "../../src/audit/spool-ports";
 import type { AttemptPrecondition } from "../../src/audit/coordinator";
 import {
   Aes256GcmAuditSpool,
@@ -36,12 +43,14 @@ const FIXED_CLOCK = (): string => "2026-01-01T00:00:00.000Z";
 
 // Brands are compile-time only; the loader is a trusted adapter that constructs them for tests.
 const opId = (s: string): OperationId => s as unknown as OperationId;
-const attId = (s: string): OperationAttemptId => s as unknown as OperationAttemptId;
+const attId = (s: string): OperationAttemptId =>
+  s as unknown as OperationAttemptId;
 const tenId = (s: string): TenantId => s as unknown as TenantId;
 const matId = (s: string): MatterId => s as unknown as MatterId;
 const actId = (s: string): ActorId => s as unknown as ActorId;
 const engId = (s: string): EngineVersion => s as unknown as EngineVersion;
-const dictVer = (n: bigint): DictionaryVersion => n as unknown as DictionaryVersion;
+const dictVer = (n: bigint): DictionaryVersion =>
+  n as unknown as DictionaryVersion;
 
 function buildPrepared(opts: {
   readonly attemptId: string;
@@ -76,7 +85,9 @@ class FakePrimaryStore implements AuditPrimaryStore {
   /** Seeds an attempt already durably stored + finalized in primary (drain de-dup fixture). */
   public seedExisting(record: PhiAuditPreparedRecord): void {
     this.#prepared.add(record.attemptId as unknown as string);
-    this.finalizedEvents.push(preparedToTerminalEvent(record, "completed", null, FIXED_CLOCK()));
+    this.finalizedEvents.push(
+      preparedToTerminalEvent(record, "completed", null, FIXED_CLOCK()),
+    );
   }
 
   public async prepare(
@@ -89,7 +100,10 @@ class FakePrimaryStore implements AuditPrimaryStore {
     this.prepareAttempts += 1;
     const id = record.attemptId as unknown as string;
     if (!this.available) {
-      return { status: "unavailable", fixedFailureCode: "AUDIT_PRIMARY_UNAVAILABLE" };
+      return {
+        status: "unavailable",
+        fixedFailureCode: "AUDIT_PRIMARY_UNAVAILABLE",
+      };
     }
     if (this.#prepared.has(id)) {
       return { status: "already_exists", durableRecordId: `primary:${id}` };
@@ -112,7 +126,10 @@ class InMemorySpoolVolume implements SpoolVolume {
     this.durable = durable;
   }
 
-  public async putAtomic(recordId: string, bytes: Uint8Array): Promise<Readonly<{ flushed: boolean }>> {
+  public async putAtomic(
+    recordId: string,
+    bytes: Uint8Array,
+  ): Promise<Readonly<{ flushed: boolean }>> {
     this.#store.set(recordId, Uint8Array.from(bytes));
     return { flushed: true };
   }
@@ -187,7 +204,9 @@ function detectPlaintextOnDisk(raw: Uint8Array | null): string | null {
   const onDisk = new TextDecoder().decode(raw);
   const haystack = onDisk.normalize("NFKC").toLocaleLowerCase("en-US");
   for (const canary of SEEDED_CANARIES) {
-    if (haystack.includes(canary.normalize("NFKC").toLocaleLowerCase("en-US"))) {
+    if (
+      haystack.includes(canary.normalize("NFKC").toLocaleLowerCase("en-US"))
+    ) {
       return onDisk;
     }
   }
@@ -209,7 +228,8 @@ async function collectSpoolRecords(
     const decrypted = await spool.decryptForAudit(recordId);
     records.push({
       attemptId: envelope.attemptId as unknown as string,
-      plaintextOnDisk: detectPlaintextOnDisk(rawPrepared) ?? detectPlaintextOnDisk(rawEvent),
+      plaintextOnDisk:
+        detectPlaintextOnDisk(rawPrepared) ?? detectPlaintextOnDisk(rawEvent),
       ciphertextBytes: envelope.ciphertext.length,
       decrypted,
     });
@@ -218,7 +238,9 @@ async function collectSpoolRecords(
 }
 
 /** SEC-N3-01: an audit event carrying any value/extra field is rejected before it is ever emitted. */
-function runSchemaRejection(fixture: Readonly<Record<string, unknown>>): OracleObservation {
+function runSchemaRejection(
+  fixture: Readonly<Record<string, unknown>>,
+): OracleObservation {
   const serializer = new ExactAllowListAuditSerializer();
   const validEvent = preparedToTerminalEvent(
     buildPrepared({ attemptId: "attempt-schema" }),
@@ -226,7 +248,8 @@ function runSchemaRejection(fixture: Readonly<Record<string, unknown>>): OracleO
     null,
     FIXED_CLOCK(),
   );
-  const extraKeys = (fixture["extraKeys"] as readonly string[] | undefined) ?? [];
+  const extraKeys =
+    (fixture["extraKeys"] as readonly string[] | undefined) ?? [];
   const tainted: Record<string, unknown> = { ...validEvent };
   for (const key of extraKeys) {
     tainted[key] = "SENSITIVE-VALUE";
@@ -247,7 +270,9 @@ function runSchemaRejection(fixture: Readonly<Record<string, unknown>>): OracleO
 }
 
 /** SEC-N3-03: an audit event missing any required metadata field never serializes. */
-function runOmitRequired(fixture: Readonly<Record<string, unknown>>): OracleObservation {
+function runOmitRequired(
+  fixture: Readonly<Record<string, unknown>>,
+): OracleObservation {
   const serializer = new ExactAllowListAuditSerializer();
   const validEvent = preparedToTerminalEvent(
     buildPrepared({ attemptId: "attempt-omit" }),
@@ -277,19 +302,31 @@ function runOmitRequired(fixture: Readonly<Record<string, unknown>>): OracleObse
 }
 
 /** SEC-N3-05: draining the encrypted spool into primary is lossless and idempotent. */
-async function runDrain(fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+async function runDrain(
+  fixture: Readonly<Record<string, unknown>>,
+): Promise<OracleObservation> {
   const volume = new InMemorySpoolVolume(true);
-  const spool = new Aes256GcmAuditSpool(volume, new FixedKeyProvider(), FIXED_CLOCK);
+  const spool = new Aes256GcmAuditSpool(
+    volume,
+    new FixedKeyProvider(),
+    FIXED_CLOCK,
+  );
   const primary = new FakePrimaryStore();
 
-  const spooledAttemptIds = (fixture["spooledAttemptIds"] as readonly string[] | undefined) ?? [];
+  const spooledAttemptIds =
+    (fixture["spooledAttemptIds"] as readonly string[] | undefined) ?? [];
   for (const id of spooledAttemptIds) {
     const prepared = buildPrepared({ attemptId: id });
     const receipt = await spool.appendPrepared(prepared);
-    await spool.finalize(receipt, preparedToTerminalEvent(prepared, "completed", null, FIXED_CLOCK()));
+    await spool.finalize(
+      receipt,
+      preparedToTerminalEvent(prepared, "completed", null, FIXED_CLOCK()),
+    );
   }
 
-  const existing = (fixture["existingPrimaryAttemptIds"] as readonly string[] | undefined) ?? [];
+  const existing =
+    (fixture["existingPrimaryAttemptIds"] as readonly string[] | undefined) ??
+    [];
   for (const id of existing) {
     primary.seedExisting(buildPrepared({ attemptId: id }));
   }
@@ -301,7 +338,11 @@ async function runDrain(fixture: Readonly<Record<string, unknown>>): Promise<Ora
 
   return {
     ...baseObservation(),
-    drain: { delivered: report.delivered, duplicates: report.duplicates, remaining: report.remaining },
+    drain: {
+      delivered: report.delivered,
+      duplicates: report.duplicates,
+      remaining: report.remaining,
+    },
     auditEvents: [...primary.finalizedEvents],
   };
 }
@@ -311,19 +352,36 @@ async function runDrain(fixture: Readonly<Record<string, unknown>>): Promise<Ora
  * real coordinator over the real durable emitter + AES-256-GCM spool. Durability is prepared before
  * the provider is ever invoked; a simultaneous primary+spool outage fails closed with zero egress.
  */
-async function runAttempt(fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
-  const attemptId = (fixture["attemptId"] as string | undefined) ?? "attempt-default";
+async function runAttempt(
+  fixture: Readonly<Record<string, unknown>>,
+): Promise<OracleObservation> {
+  const attemptId =
+    (fixture["attemptId"] as string | undefined) ?? "attempt-default";
   const primary = new FakePrimaryStore();
-  primary.available = (fixture["primaryAvailable"] as boolean | undefined) ?? true;
-  const volume = new InMemorySpoolVolume((fixture["spoolAvailable"] as boolean | undefined) ?? true);
-  const spool = new Aes256GcmAuditSpool(volume, new FixedKeyProvider(), FIXED_CLOCK);
+  primary.available =
+    (fixture["primaryAvailable"] as boolean | undefined) ?? true;
+  const volume = new InMemorySpoolVolume(
+    (fixture["spoolAvailable"] as boolean | undefined) ?? true,
+  );
+  const spool = new Aes256GcmAuditSpool(
+    volume,
+    new FixedKeyProvider(),
+    FIXED_CLOCK,
+  );
   const serializer = new ExactAllowListAuditSerializer();
-  const emitter = new DurablePhiAuditEmitter(primary, spool, serializer, FIXED_CLOCK);
+  const emitter = new DurablePhiAuditEmitter(
+    primary,
+    spool,
+    serializer,
+    FIXED_CLOCK,
+  );
   const coordinator = new PhiAuditedAttemptCoordinator(emitter, FIXED_CLOCK);
 
   const prepared = buildPrepared({
     attemptId,
-    counts: fixture["matchedClasses"] as Partial<Record<IdentifierClass, number>> | undefined,
+    counts: fixture["matchedClasses"] as
+      | Partial<Record<IdentifierClass, number>>
+      | undefined,
   });
 
   const precondition: AttemptPrecondition =
@@ -337,7 +395,11 @@ async function runAttempt(fixture: Readonly<Record<string, unknown>>): Promise<O
     providerPayloads.push("[[SUBJECT_1]] tokenized-provider-request");
   };
 
-  const result = await coordinator.run({ prepared, precondition, invokeProvider });
+  const result = await coordinator.run({
+    prepared,
+    precondition,
+    invokeProvider,
+  });
 
   return {
     ...baseObservation(),
@@ -347,13 +409,18 @@ async function runAttempt(fixture: Readonly<Record<string, unknown>>): Promise<O
     auditEvents: [...primary.finalizedEvents],
     primaryAuditAttempts: primary.prepareAttempts,
     spoolRecords: await collectSpoolRecords(spool, volume),
-    metrics: { survivesReplicaRestart: spool.durabilityMetrics().survivesReplicaRestart },
+    metrics: {
+      survivesReplicaRestart: spool.durabilityMetrics().survivesReplicaRestart,
+    },
   };
 }
 
 export function loadAuditHarness(): ModuleHarness {
   return {
-    async run(_caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    async run(
+      _caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       if (Array.isArray(fixture["extraKeys"])) {
         return runSchemaRejection(fixture);
       }

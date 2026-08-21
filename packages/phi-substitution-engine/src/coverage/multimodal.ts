@@ -7,7 +7,10 @@
  * surface that claims text substitution over an image is therefore an invalid
  * coverage claim and must not build.
  */
-export type CarveOutMitigation = "BAA_PROVIDER" | "MINIMUM_NECESSARY" | "SEPARATE_TICKET";
+export type CarveOutMitigation =
+  | "BAA_PROVIDER"
+  | "MINIMUM_NECESSARY"
+  | "SEPARATE_TICKET";
 
 export interface MultimodalCarveOutInput {
   readonly surfaceKind: string;
@@ -33,7 +36,10 @@ export function classifyMultimodalCarveOut(
   // Names remain pixels: text substitution can only cover a text surface.
   const engineCovered = !isImageSurface && input.substitutionClaimed;
   const reviewedCarveout =
-    isImageSurface && !input.substitutionClaimed && hasBaa && hasMinimumNecessary;
+    isImageSurface &&
+    !input.substitutionClaimed &&
+    hasBaa &&
+    hasMinimumNecessary;
 
   return {
     buildPassed: reviewedCarveout && !engineCovered,

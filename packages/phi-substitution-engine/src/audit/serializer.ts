@@ -1,11 +1,21 @@
 import type { OperationId } from "../core/brands";
 import type { AiOperation } from "../core/contracts";
-import type { PhiAuditEvent, PhiAuditOutcome, PhiAuditPreparedRecord, PhiAuditSerializer } from "./ports";
+import type {
+  PhiAuditEvent,
+  PhiAuditOutcome,
+  PhiAuditPreparedRecord,
+  PhiAuditSerializer,
+} from "./ports";
 import { IDENTIFIER_CLASSES } from "./counts";
 import { PhiAuditError } from "./errors";
 import { safeOwnKeys } from "../core/boundary-snapshot";
 
-const AI_OPERATIONS: readonly AiOperation[] = ["generation", "stream", "embedding", "graph_extraction"];
+const AI_OPERATIONS: readonly AiOperation[] = [
+  "generation",
+  "stream",
+  "embedding",
+  "graph_extraction",
+];
 const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
   "completed",
   "cancelled",
@@ -139,21 +149,35 @@ const DECIMAL_VERSION = /^\d{1,20}$/;
 const SAFE_SLUG = /^[A-Za-z0-9._-]{1,64}$/;
 
 function safeOperationId(candidate: unknown): OperationId | null {
-  if (isPlainObject(candidate) && typeof candidate["operationId"] === "string") {
+  if (
+    isPlainObject(candidate) &&
+    typeof candidate["operationId"] === "string"
+  ) {
     return candidate["operationId"] as OperationId;
   }
   return null;
 }
 
 function reject(candidate: unknown, path: string): never {
-  throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", safeOperationId(candidate), { path });
+  throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", safeOperationId(candidate), {
+    path,
+  });
 }
 
 function missing(candidate: unknown, path: string): never {
-  throw new PhiAuditError("AUDIT_REQUIRED_FIELD_MISSING", safeOperationId(candidate), { path });
+  throw new PhiAuditError(
+    "AUDIT_REQUIRED_FIELD_MISSING",
+    safeOperationId(candidate),
+    { path },
+  );
 }
 
-function validateField(root: unknown, value: unknown, spec: FieldSpec, path: string): void {
+function validateField(
+  root: unknown,
+  value: unknown,
+  spec: FieldSpec,
+  path: string,
+): void {
   switch (spec.kind) {
     case "literal":
       if (value !== spec.value) reject(root, path);
@@ -168,25 +192,41 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
       if (value !== null && typeof value !== "bigint") reject(root, path);
       return;
     case "number":
-      if (typeof value !== "number" || !Number.isFinite(value)) reject(root, path);
+      if (typeof value !== "number" || !Number.isFinite(value))
+        reject(root, path);
       return;
     case "enum":
-      if (typeof value !== "string" || !listIncludes(spec.values, value)) reject(root, path);
+      if (typeof value !== "string" || !listIncludes(spec.values, value))
+        reject(root, path);
       return;
     case "enumOrNull":
-      if (value !== null && (typeof value !== "string" || !listIncludes(spec.values, value))) reject(root, path);
+      if (
+        value !== null &&
+        (typeof value !== "string" || !listIncludes(spec.values, value))
+      )
+        reject(root, path);
       return;
     case "timestamp":
-      if (typeof value !== "string" || !ISO_8601_UTC.test(value)) reject(root, path);
+      if (typeof value !== "string" || !ISO_8601_UTC.test(value))
+        reject(root, path);
       return;
     case "versionOrNull":
-      if (value !== null && (typeof value !== "string" || !DECIMAL_VERSION.test(value))) reject(root, path);
+      if (
+        value !== null &&
+        (typeof value !== "string" || !DECIMAL_VERSION.test(value))
+      )
+        reject(root, path);
       return;
     case "slugOrNull":
-      if (value !== null && (typeof value !== "string" || !SAFE_SLUG.test(value))) reject(root, path);
+      if (
+        value !== null &&
+        (typeof value !== "string" || !SAFE_SLUG.test(value))
+      )
+        reject(root, path);
       return;
     case "slug":
-      if (typeof value !== "string" || !SAFE_SLUG.test(value)) reject(root, path);
+      if (typeof value !== "string" || !SAFE_SLUG.test(value))
+        reject(root, path);
       return;
     case "totalCounts":
       validateTotalCounts(root, value, path);
@@ -201,7 +241,11 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
   }
 }
 
-function validateTotalCounts(root: unknown, value: unknown, path: string): void {
+function validateTotalCounts(
+  root: unknown,
+  value: unknown,
+  path: string,
+): void {
   if (!isPlainObject(value)) reject(root, path);
   const record = value as Record<string, unknown>;
   // Missing-required first: every identifier class must be present (explicit zeroes).
@@ -215,15 +259,22 @@ function validateTotalCounts(root: unknown, value: unknown, path: string): void 
   // the unexpected key itself is attacker-controlled and could BE the PHI, so it is NEVER echoed into
   // the rejection's caller-visible `.path` — only the fixed nested location is reported.
   for (const key of Object.keys(record)) {
-    if (!listIncludes(IDENTIFIER_CLASSES, key)) reject(root, `${path}.<unexpected>`);
+    if (!listIncludes(IDENTIFIER_CLASSES, key))
+      reject(root, `${path}.<unexpected>`);
   }
   for (const identifierClass of IDENTIFIER_CLASSES) {
     const count = record[identifierClass];
-    if (typeof count !== "number" || !Number.isFinite(count)) reject(root, `${path}.${identifierClass}`);
+    if (typeof count !== "number" || !Number.isFinite(count))
+      reject(root, `${path}.${identifierClass}`);
   }
 }
 
-function validateObject(root: unknown, value: unknown, schema: ObjectSchema, path: string): void {
+function validateObject(
+  root: unknown,
+  value: unknown,
+  schema: ObjectSchema,
+  path: string,
+): void {
   if (!isPlainObject(value)) reject(root, path);
   const record = value as Record<string, unknown>;
   const allowed = Object.keys(schema);
@@ -238,15 +289,24 @@ function validateObject(root: unknown, value: unknown, schema: ObjectSchema, pat
   // could ITSELF be the PHI, so it is NEVER echoed into the rejection's `.path` (which reaches the
   // caller) — only the fixed parent location is reported.
   for (const key of Object.keys(record)) {
-    if (!listIncludes(allowed, key)) reject(root, path === "" ? "<unexpected>" : `${path}.<unexpected>`);
+    if (!listIncludes(allowed, key))
+      reject(root, path === "" ? "<unexpected>" : `${path}.<unexpected>`);
   }
   // 3. Per-field types / nested shapes.
   for (const [key, spec] of Object.entries(schema)) {
-    validateField(root, record[key], spec, path === "" ? key : `${path}.${key}`);
+    validateField(
+      root,
+      record[key],
+      spec,
+      path === "" ? key : `${path}.${key}`,
+    );
   }
 }
 
-function canonicalize(value: unknown, schema: ObjectSchema): Record<string, unknown> {
+function canonicalize(
+  value: unknown,
+  schema: ObjectSchema,
+): Record<string, unknown> {
   const record = value as Record<string, unknown>;
   const ordered: Record<string, unknown> = {};
   for (const [key, spec] of Object.entries(schema)) {
@@ -268,7 +328,9 @@ function canonicalize(value: unknown, schema: ObjectSchema): Record<string, unkn
 
 /** A field whose getter THROWS (its message could carry PHI) is replaced with this sentinel, which
  *  fails EVERY FieldSpec — the record is AUDIT_SCHEMA_REJECTED, never persisted or surfaced raw. */
-const THROWING_FIELD_SENTINEL: unique symbol = Symbol("phi-audit-throwing-field");
+const THROWING_FIELD_SENTINEL: unique symbol = Symbol(
+  "phi-audit-throwing-field",
+);
 
 /** Reads one own field getter-throw-safe (§7/N2): a throwing getter yields the reject sentinel. */
 function readOnceSafe(obj: Record<string, unknown>, key: string): unknown {
@@ -336,10 +398,15 @@ export function sanitizeTerminalEvent(event: PhiAuditEvent): PhiAuditEvent {
  * {@link sanitizeTerminalEvent}: every field is read a SINGLE time and validated, so a durable store
  * that persists the returned record can never re-read a mutating/throwing getter into a PHI value.
  */
-export function sanitizePreparedRecord(record: PhiAuditPreparedRecord): PhiAuditPreparedRecord {
+export function sanitizePreparedRecord(
+  record: PhiAuditPreparedRecord,
+): PhiAuditPreparedRecord {
   const snapshot = materialize(record, PREPARED_SCHEMA);
   validateObject(snapshot, snapshot, PREPARED_SCHEMA, "");
-  return canonicalize(snapshot, PREPARED_SCHEMA) as unknown as PhiAuditPreparedRecord;
+  return canonicalize(
+    snapshot,
+    PREPARED_SCHEMA,
+  ) as unknown as PhiAuditPreparedRecord;
 }
 
 /**
@@ -350,7 +417,9 @@ export function sanitizePreparedRecord(record: PhiAuditPreparedRecord): PhiAudit
 export class ExactAllowListAuditSerializer implements PhiAuditSerializer {
   public serialize(event: PhiAuditEvent): Uint8Array {
     // Read-once snapshot → validate → canonical bytes (§7/N2 TOCTOU-safe).
-    return new TextEncoder().encode(JSON.stringify(sanitizeTerminalEvent(event)));
+    return new TextEncoder().encode(
+      JSON.stringify(sanitizeTerminalEvent(event)),
+    );
   }
 
   public validatePrepared(record: PhiAuditPreparedRecord): void {

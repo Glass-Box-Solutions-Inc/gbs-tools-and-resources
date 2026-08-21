@@ -59,7 +59,11 @@ export type PreparedControlPlaneState =
   | "reclaim_marked"
   | "quarantined";
 
-export type ClaimControlPlaneState = "pending" | "flushed" | "expired" | "superseded";
+export type ClaimControlPlaneState =
+  | "pending"
+  | "flushed"
+  | "expired"
+  | "superseded";
 
 export type InMemoryControlPlaneFaultPhase =
   | "prepareAfterUploadingInsert"
@@ -207,7 +211,9 @@ function cloneBytes<T extends Uint8Array>(value: T): T {
   return Uint8Array.from(value) as T;
 }
 
-function cloneRecord(record: EncryptedReversalRecordBlob): EncryptedReversalRecordBlob {
+function cloneRecord(
+  record: EncryptedReversalRecordBlob,
+): EncryptedReversalRecordBlob {
   return {
     ...record,
     ciphertext: cloneBytes(record.ciphertext),
@@ -273,7 +279,9 @@ function checkedLimit(value: number): number {
 }
 
 /** In-memory implementation of both the frozen request-path port and least-authority maintenance port. */
-export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, AzureControlPlane {
+export class InMemoryControlPlane
+  implements SpoolVolume, SpoolMaintenance, AzureControlPlane
+{
   readonly #nowEpochMilliseconds: () => number;
   readonly #uploadHorizonMilliseconds: number;
   readonly #quarantineGraceMilliseconds: number;
@@ -312,7 +320,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       "read_drain",
     );
     if (
-      this.#supersedeRetentionMilliseconds < this.#quarantineGraceMilliseconds ||
+      this.#supersedeRetentionMilliseconds <
+        this.#quarantineGraceMilliseconds ||
       this.#quarantineGraceMilliseconds < this.#readDrainMilliseconds
     ) {
       throw new Error("invalid_retention_window_order");
@@ -350,7 +359,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return this.#nextUuidLike() as unknown as PublishedCommitHandle;
   }
 
-  public async ensureDekGeneration(input: EnsureDekGenerationInput): Promise<DekGeneration> {
+  public async ensureDekGeneration(
+    input: EnsureDekGenerationInput,
+  ): Promise<DekGeneration> {
     const scopeKey = `${input.scope.tenantId}\0${input.scope.matterId}\0${input.scope.purpose}`;
     const existing = this.#dekGenerations.get(scopeKey);
     if (existing !== undefined) {
@@ -383,9 +394,15 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     readonly createdAtEpochMs: number;
     readonly expiresAtEpochMs: bigint;
   }): { readonly operationKey: string; readonly recordCreatedAtMs: number } {
-    const recordCreatedAtMs = checkedDuration(input.createdAtEpochMs, "record_created_at_ms");
+    const recordCreatedAtMs = checkedDuration(
+      input.createdAtEpochMs,
+      "record_created_at_ms",
+    );
     if (input.attemptId.length === 0) throw new Error("invalid_attempt_id");
-    if (input.expiresAtEpochMs < 0n || input.expiresAtEpochMs > 2n ** 64n - 1n) {
+    if (
+      input.expiresAtEpochMs < 0n ||
+      input.expiresAtEpochMs > 2n ** 64n - 1n
+    ) {
       throw new Error("invalid_retention_expiry");
     }
     if (
@@ -394,10 +411,16 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     ) {
       throw new Error("invalid_detector_expiry");
     }
-    if (input.retentionClass === "matter" && input.expiresAtEpochMs !== 2n ** 64n - 1n) {
+    if (
+      input.retentionClass === "matter" &&
+      input.expiresAtEpochMs !== 2n ** 64n - 1n
+    ) {
       throw new Error("invalid_matter_expiry");
     }
-    return { operationKey: `${input.tenantId}\0${input.attemptId}`, recordCreatedAtMs };
+    return {
+      operationKey: `${input.tenantId}\0${input.attemptId}`,
+      recordCreatedAtMs,
+    };
   }
 
   #anchorPrepared(row: PreparedRow): void {
@@ -410,11 +433,13 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       throw new Error("insert_prepared_retention_binding_mismatch");
     }
     const insertedBinding = existing === undefined;
-    if (insertedBinding) this.#operationRetention.set(operationKey, row.retentionClass);
+    if (insertedBinding)
+      this.#operationRetention.set(operationKey, row.retentionClass);
     try {
       this.#fault("anchorAfterBindingInsert");
       const key = asString(row.preparedBlobId);
-      if (this.#prepared.has(key)) throw new Error("insert_prepared_duplicate_handle");
+      if (this.#prepared.has(key))
+        throw new Error("insert_prepared_duplicate_handle");
       this.#prepared.set(key, row);
       this.#fault("anchorAfterPreparedInsert");
     } catch (error: unknown) {
@@ -424,7 +449,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     }
   }
 
-  public insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void> {
+  public insertPreparedUploading(
+    input: InsertPreparedUploadingInput,
+  ): Promise<void> {
     const retention = this.#retentionMetadata({
       tenantId: asString(input.tenantId),
       attemptId: asString(input.attemptId),
@@ -432,7 +459,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       createdAtEpochMs: input.createdAtEpochMs,
       expiresAtEpochMs: input.expiresAtEpochMs,
     });
-    const createdAtMs = checkedDuration(this.#nowEpochMilliseconds(), "created_at_ms");
+    const createdAtMs = checkedDuration(
+      this.#nowEpochMilliseconds(),
+      "created_at_ms",
+    );
     const row: PreparedRow = {
       preparedBlobId: input.preparedBlobId,
       tenant: asString(input.tenantId),
@@ -455,7 +485,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
 
   public markFinalized(input: MarkFinalizedInput): Promise<void> {
     if (input.blobEtag.length === 0 || input.blobLength < 0n) {
-      return Promise.reject(new Error("mark_finalized_invalid_blob_attributes"));
+      return Promise.reject(
+        new Error("mark_finalized_invalid_blob_attributes"),
+      );
     }
     const row = this.#prepared.get(asString(input.preparedBlobId));
     if (row === undefined || row.state !== "uploading") {
@@ -467,11 +499,16 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return Promise.resolve();
   }
 
-  public async prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
+  public async prepare(
+    input: PrepareReversalWriteInput,
+  ): Promise<PreparedReversalWrite> {
     const handle = this.#nextPreparedHandle();
     // Prepared-row lifecycle age belongs to the plane clock. The producer timestamp remains
     // metadata inside the encrypted record and must not drive reclamation eligibility.
-    const createdAtMs = checkedDuration(this.#nowEpochMilliseconds(), "created_at_ms");
+    const createdAtMs = checkedDuration(
+      this.#nowEpochMilliseconds(),
+      "created_at_ms",
+    );
     const retention = this.#retentionMetadata({
       tenantId: asString(input.encryptedRecord.meta.tenantId),
       attemptId: asString(input.encryptedRecord.meta.attemptId),
@@ -516,14 +553,26 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return { handle };
   }
 
-  public publish(prepared: PreparedReversalWrite): Promise<PublishReversalResult>;
+  public publish(
+    prepared: PreparedReversalWrite,
+  ): Promise<PublishReversalResult>;
   public publish(input: PublishPreparedInput): Promise<PublishReversalResult>;
-  public publish(input: PreparedReversalWrite | PublishPreparedInput): Promise<PublishReversalResult> {
+  public publish(
+    input: PreparedReversalWrite | PublishPreparedInput,
+  ): Promise<PublishReversalResult> {
     const prepared = "prepared" in input ? input.prepared : input;
-    if ("prepared" in input) checkedDuration(input.nowEpochMilliseconds, "now_ms");
-    const nowEpochMilliseconds = checkedDuration(this.#nowEpochMilliseconds(), "now_ms");
-    const suppliedExpiry = "prepared" in input ? input.expiresAtEpochMs : undefined;
-    if (suppliedExpiry !== undefined && (suppliedExpiry < 0n || suppliedExpiry > 2n ** 64n - 1n)) {
+    if ("prepared" in input)
+      checkedDuration(input.nowEpochMilliseconds, "now_ms");
+    const nowEpochMilliseconds = checkedDuration(
+      this.#nowEpochMilliseconds(),
+      "now_ms",
+    );
+    const suppliedExpiry =
+      "prepared" in input ? input.expiresAtEpochMs : undefined;
+    if (
+      suppliedExpiry !== undefined &&
+      (suppliedExpiry < 0n || suppliedExpiry > 2n ** 64n - 1n)
+    ) {
       return Promise.reject(new Error("publish_invalid_expiry"));
     }
     const row = this.#prepared.get(asString(prepared.handle));
@@ -560,8 +609,12 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     ) {
       return Promise.reject(new Error("publish_prepared_not_durable"));
     }
-    const effectiveExpiry = suppliedExpiry ?? row.blob!.encryptedRecord.meta.expiresAtEpochMs;
-    if (row.retentionExpiresAtMs === null || row.retentionExpiresAtMs !== effectiveExpiry) {
+    const effectiveExpiry =
+      suppliedExpiry ?? row.blob!.encryptedRecord.meta.expiresAtEpochMs;
+    if (
+      row.retentionExpiresAtMs === null ||
+      row.retentionExpiresAtMs !== effectiveExpiry
+    ) {
       return Promise.reject(new Error("publish_retention_metadata_mismatch"));
     }
     const claim: ClaimRow = {
@@ -609,7 +662,11 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       }
     }
     for (const other of this.#claims.values()) {
-      if (other !== claim && other.preparedBlobId !== null && asString(other.preparedBlobId) === preparedId) {
+      if (
+        other !== claim &&
+        other.preparedBlobId !== null &&
+        asString(other.preparedBlobId) === preparedId
+      ) {
         throw new Error("expire_pending_has_other_claim_reference");
       }
     }
@@ -618,7 +675,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     row.state = "orphaned";
   }
 
-  public readClaimBlobReference(commit: PublishedCommitHandle): Promise<ClaimBlobReference> {
+  public readClaimBlobReference(
+    commit: PublishedCommitHandle,
+  ): Promise<ClaimBlobReference> {
     const claim = this.#claimsByCommit.get(asString(commit));
     if (claim?.state === "superseded") {
       return Promise.resolve({ kind: "superseded" });
@@ -633,9 +692,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         return Promise.resolve({ kind: "stale-flushed" });
       }
     }
-    const row = claim?.preparedBlobId === null || claim?.preparedBlobId === undefined
-      ? undefined
-      : this.#prepared.get(asString(claim.preparedBlobId));
+    const row =
+      claim?.preparedBlobId === null || claim?.preparedBlobId === undefined
+        ? undefined
+        : this.#prepared.get(asString(claim.preparedBlobId));
     if (
       claim === undefined ||
       (claim.state !== "pending" && claim.state !== "flushed") ||
@@ -644,7 +704,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       row.blobEtag === undefined ||
       row.blobLen === undefined
     ) {
-      return Promise.reject(new Error("flush_claim_blob_reference_integrity_failure"));
+      return Promise.reject(
+        new Error("flush_claim_blob_reference_integrity_failure"),
+      );
     }
     return Promise.resolve({
       kind: "blob",
@@ -655,9 +717,15 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
   }
 
   #transactionalLifecycle<T>(operation: () => T): T {
-    const claims = new Map([...this.#claims].map(([key, value]) => [key, { ...value }]));
-    const prepared = new Map([...this.#prepared].map(([key, value]) => [key, { ...value }]));
-    const current = new Map([...this.#current].map(([key, value]) => [key, { ...value }]));
+    const claims = new Map(
+      [...this.#claims].map(([key, value]) => [key, { ...value }]),
+    );
+    const prepared = new Map(
+      [...this.#prepared].map(([key, value]) => [key, { ...value }]),
+    );
+    const current = new Map(
+      [...this.#current].map(([key, value]) => [key, { ...value }]),
+    );
     try {
       return operation();
     } catch (error: unknown) {
@@ -675,7 +743,11 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     }
   }
 
-  #assertNoOtherReference(row: PreparedRow, subject: ClaimRow, allowedCurrentMapping?: string): void {
+  #assertNoOtherReference(
+    row: PreparedRow,
+    subject: ClaimRow,
+    allowedCurrentMapping?: string,
+  ): void {
     for (const other of this.#claims.values()) {
       if (
         other !== subject &&
@@ -688,7 +760,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     for (const current of this.#current.values()) {
       if (
         asString(current.preparedBlobId) === asString(row.preparedBlobId) &&
-        (allowedCurrentMapping === undefined || asString(current.mappingKey) !== allowedCurrentMapping)
+        (allowedCurrentMapping === undefined ||
+          asString(current.mappingKey) !== allowedCurrentMapping)
       ) {
         throw new Error("supersede_prepared_is_referenced");
       }
@@ -728,7 +801,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return this.#transactionalLifecycle(() => {
       const claim = this.#claimsByCommit.get(asString(commit));
       if (claim === undefined) throw new Error("flush_unknown_commit");
-      const nowEpochMs = checkedDuration(this.#nowEpochMilliseconds(), "now_ms");
+      const nowEpochMs = checkedDuration(
+        this.#nowEpochMilliseconds(),
+        "now_ms",
+      );
       if (claim.state === "superseded") return false;
       if (claim.state === "expired") throw new Error("flush_expired_commit");
       if (claim.state === "flushed") {
@@ -738,7 +814,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
           asString(current.commitHandle) === asString(claim.commitHandle) &&
           current.preparedBlobId === claim.preparedBlobId &&
           current.ordinal === claim.ordinal
-        ) return false;
+        )
+          return false;
         this.#selfHealIfStale(claim, nowEpochMs);
         if (claim.preparedBlobId === null) return false;
         throw new Error("flush_flushed_current_invariant_failure");
@@ -747,7 +824,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         this.#expirePending(claim);
         return true;
       }
-      if (claim.preparedBlobId === null) throw new Error("flush_pending_without_prepared");
+      if (claim.preparedBlobId === null)
+        throw new Error("flush_pending_without_prepared");
       const row = this.#prepared.get(asString(claim.preparedBlobId));
       if (
         attributes === undefined ||
@@ -774,12 +852,18 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         return false;
       }
       if (claim.ordinal > current.ordinal) {
-        const oldClaim = this.#claimsByCommit.get(asString(current.commitHandle));
-        const oldPrepared = this.#prepared.get(asString(current.preparedBlobId));
+        const oldClaim = this.#claimsByCommit.get(
+          asString(current.commitHandle),
+        );
+        const oldPrepared = this.#prepared.get(
+          asString(current.preparedBlobId),
+        );
         if (
-          oldClaim === undefined || oldClaim.state !== "flushed" ||
+          oldClaim === undefined ||
+          oldClaim.state !== "flushed" ||
           oldClaim.preparedBlobId !== current.preparedBlobId ||
-          oldPrepared === undefined || oldPrepared.state !== "committed"
+          oldPrepared === undefined ||
+          oldPrepared.state !== "committed"
         ) {
           throw new Error("flush_old_pointer_invariant_failure");
         }
@@ -817,31 +901,41 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
 
   public flushClaim(input: FlushClaimInput): Promise<void> {
     checkedDuration(input.nowEpochMilliseconds, "now_ms");
-    if ("blobEtag" in input && (input.blobEtag.length === 0 || input.blobLength < 0n)) {
+    if (
+      "blobEtag" in input &&
+      (input.blobEtag.length === 0 || input.blobLength < 0n)
+    ) {
       return Promise.reject(new Error("flush_invalid_blob_attributes"));
     }
     try {
       const expired = this.#flushAtomic(
         input.commit,
-        "blobEtag" in input ? { blobEtag: input.blobEtag, blobLength: input.blobLength } : undefined,
+        "blobEtag" in input
+          ? { blobEtag: input.blobEtag, blobLength: input.blobLength }
+          : undefined,
       );
-      if (expired) return Promise.reject(new Error("flush_expired_pending_commit"));
+      if (expired)
+        return Promise.reject(new Error("flush_expired_pending_commit"));
       return Promise.resolve();
     } catch (error: unknown) {
       return Promise.reject(error);
     }
   }
 
-  public expirePendingDetach(input: ExpirePendingDetachInput): Promise<boolean> {
+  public expirePendingDetach(
+    input: ExpirePendingDetachInput,
+  ): Promise<boolean> {
     checkedDuration(input.nowEpochMilliseconds, "now_ms");
     const claim = this.#claimsByCommit.get(asString(input.commit));
     if (claim === undefined) {
       return Promise.reject(new Error("expire_unknown_commit"));
     }
-    return Promise.resolve(this.#computeExpired(
-      claim,
-      checkedDuration(this.#nowEpochMilliseconds(), "now_ms"),
-    ));
+    return Promise.resolve(
+      this.#computeExpired(
+        claim,
+        checkedDuration(this.#nowEpochMilliseconds(), "now_ms"),
+      ),
+    );
   }
 
   public flush(commit: PublishedCommitHandle): Promise<void> {
@@ -850,7 +944,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       return Promise.reject(new Error("flush_unknown_commit"));
     }
     if (claim.state === "superseded") return Promise.resolve();
-    if (claim.state === "expired") return Promise.reject(new Error("flush_expired_commit"));
+    if (claim.state === "expired")
+      return Promise.reject(new Error("flush_expired_commit"));
     if (claim.state === "flushed") {
       try {
         this.#flushAtomic(commit);
@@ -859,15 +954,25 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         return Promise.reject(error);
       }
     }
-    if (claim.preparedBlobId === null) return Promise.reject(new Error("flush_pending_without_prepared"));
+    if (claim.preparedBlobId === null)
+      return Promise.reject(new Error("flush_pending_without_prepared"));
     const row = this.#prepared.get(asString(claim.preparedBlobId));
-    if (row === undefined || row.state !== "committed" || row.blob === undefined ||
-        row.blobEtag === undefined || row.blobLen === undefined ||
-        row.blob.etag !== row.blobEtag || row.blob.length !== row.blobLen) {
+    if (
+      row === undefined ||
+      row.state !== "committed" ||
+      row.blob === undefined ||
+      row.blobEtag === undefined ||
+      row.blobLen === undefined ||
+      row.blob.etag !== row.blobEtag ||
+      row.blob.length !== row.blobLen
+    ) {
       return Promise.reject(new Error("flush_blob_integrity_failure"));
     }
     try {
-      const expired = this.#flushAtomic(commit, { blobEtag: row.blobEtag, blobLength: row.blobLen });
+      const expired = this.#flushAtomic(commit, {
+        blobEtag: row.blobEtag,
+        blobLength: row.blobLen,
+      });
       return expired
         ? Promise.reject(new Error("flush_expired_pending_commit"))
         : Promise.resolve();
@@ -876,7 +981,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     }
   }
 
-  public readCurrent(requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]> {
+  public readCurrent(
+    requests: readonly ReversalLookupRequest[],
+  ): Promise<readonly ReversalLookupResult[]> {
     if (requests.length === 0) {
       return Promise.reject(new Error("read_current_requires_exact_keys"));
     }
@@ -896,17 +1003,28 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         continue;
       }
       const row = this.#prepared.get(asString(current.preparedBlobId));
-      if (row === undefined || row.state === "quarantined" || row.blob === undefined ||
-          row.blobEtag === undefined || row.blobLen === undefined ||
-          row.blob.etag !== row.blobEtag || row.blob.length !== row.blobLen) {
+      if (
+        row === undefined ||
+        row.state === "quarantined" ||
+        row.blob === undefined ||
+        row.blobEtag === undefined ||
+        row.blobLen === undefined ||
+        row.blob.etag !== row.blobEtag ||
+        row.blob.length !== row.blobLen
+      ) {
         return Promise.reject(new Error("read_current_blob_integrity_failure"));
       }
-      results.push({ mappingKey: request.mappingKey, encryptedRecord: cloneRecord(row.blob.encryptedRecord) });
+      results.push({
+        mappingKey: request.mappingKey,
+        encryptedRecord: cloneRecord(row.blob.encryptedRecord),
+      });
     }
     return Promise.resolve(results);
   }
 
-  public readCurrentPointers(mappingKeys: readonly ReversalMappingKey[]): Promise<readonly CurrentPointerRow[]> {
+  public readCurrentPointers(
+    mappingKeys: readonly ReversalMappingKey[],
+  ): Promise<readonly CurrentPointerRow[]> {
     if (mappingKeys.length === 0) {
       return Promise.reject(new Error("read_current_requires_exact_keys"));
     }
@@ -934,7 +1052,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         prepared.blobLen === undefined ||
         claim === undefined
       ) {
-        return Promise.reject(new Error("read_current_pointer_integrity_failure"));
+        return Promise.reject(
+          new Error("read_current_pointer_integrity_failure"),
+        );
       }
       rows.push({
         mappingKey: current.mappingKey,
@@ -959,7 +1079,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
   #isReferenced(preparedBlobId: PreparedWriteHandle): boolean {
     const id = asString(preparedBlobId);
     for (const claim of this.#claims.values()) {
-      if (claim.preparedBlobId !== null && asString(claim.preparedBlobId) === id) {
+      if (
+        claim.preparedBlobId !== null &&
+        asString(claim.preparedBlobId) === id
+      ) {
         return true;
       }
     }
@@ -976,12 +1099,17 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     supersedeRetentionMs: number,
     readDrainMs: number,
   ): bigint | undefined {
-    if (row.state !== "superseded" || row.supersededAtMs === undefined) return undefined;
+    if (row.state !== "superseded" || row.supersededAtMs === undefined)
+      return undefined;
     const supersededAt = BigInt(row.supersededAtMs);
     const window = supersededAt + BigInt(supersedeRetentionMs);
     const drain = supersededAt + BigInt(readDrainMs);
-    if (row.retentionClass === "detector-only" && row.retentionExpiresAtMs !== null) {
-      const policy = row.retentionExpiresAtMs < window ? row.retentionExpiresAtMs : window;
+    if (
+      row.retentionClass === "detector-only" &&
+      row.retentionExpiresAtMs !== null
+    ) {
+      const policy =
+        row.retentionExpiresAtMs < window ? row.retentionExpiresAtMs : window;
       return drain > policy ? drain : policy;
     }
     return supersededAt + BigInt(Math.max(supersedeRetentionMs, readDrainMs));
@@ -994,18 +1122,31 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     nowEpochMs: number,
   ): PreparedRow[] {
     return [...this.#prepared.values()]
-      .filter((row) =>
-        row.state === "reclaim_marked" ||
-        ((row.state === "finalized" || row.state === "orphaned") && row.createdAtMs < olderThanEpochMs) ||
-        (row.state === "superseded" &&
-          (this.#supersededCandidacy(row, supersedeRetentionMs, readDrainMs) ?? (2n ** 64n)) <= BigInt(nowEpochMs))
+      .filter(
+        (row) =>
+          row.state === "reclaim_marked" ||
+          ((row.state === "finalized" || row.state === "orphaned") &&
+            row.createdAtMs < olderThanEpochMs) ||
+          (row.state === "superseded" &&
+            (this.#supersededCandidacy(
+              row,
+              supersedeRetentionMs,
+              readDrainMs,
+            ) ?? 2n ** 64n) <= BigInt(nowEpochMs)),
       )
       .sort((left, right) => {
-        const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
+        const stateOrder =
+          Number(left.state !== "reclaim_marked") -
+          Number(right.state !== "reclaim_marked");
         if (stateOrder !== 0) return stateOrder;
-        const leftDeadline = this.#supersededCandidacy(left, supersedeRetentionMs, readDrainMs) ?? BigInt(left.createdAtMs);
-        const rightDeadline = this.#supersededCandidacy(right, supersedeRetentionMs, readDrainMs) ?? BigInt(right.createdAtMs);
-        if (leftDeadline !== rightDeadline) return leftDeadline < rightDeadline ? -1 : 1;
+        const leftDeadline =
+          this.#supersededCandidacy(left, supersedeRetentionMs, readDrainMs) ??
+          BigInt(left.createdAtMs);
+        const rightDeadline =
+          this.#supersededCandidacy(right, supersedeRetentionMs, readDrainMs) ??
+          BigInt(right.createdAtMs);
+        if (leftDeadline !== rightDeadline)
+          return leftDeadline < rightDeadline ? -1 : 1;
         const leftId = asString(left.preparedBlobId);
         const rightId = asString(right.preparedBlobId);
         return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
@@ -1018,7 +1159,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     supersedeRetentionMs: number,
     readDrainMs: number,
     nowEpochMs: number,
-  ): { readonly rows: readonly PreparedRow[]; readonly skippedReferenced: number } {
+  ): {
+    readonly rows: readonly PreparedRow[];
+    readonly skippedReferenced: number;
+  } {
     const candidates = this.#orderedPathOneCandidates(
       olderThanEpochMs,
       supersedeRetentionMs,
@@ -1071,20 +1215,32 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     for (const row of selected.rows) {
       if (row.state !== "reclaim_marked") {
         if (row.state === "superseded") {
-          const candidacy = this.#supersededCandidacy(row, supersedeRetentionMs, readDrainMs);
-          if (candidacy === undefined) throw new Error("superseded_candidacy_missing");
+          const candidacy = this.#supersededCandidacy(
+            row,
+            supersedeRetentionMs,
+            readDrainMs,
+          );
+          if (candidacy === undefined)
+            throw new Error("superseded_candidacy_missing");
           row.reclaimAfterMs = candidacy;
         }
         row.state = "reclaim_marked";
         this.#fault("reclaimAfterPathOneMark");
       }
-      if (row.blobLen === undefined) throw new Error("reclaim_blob_length_missing");
-      rows.push({ preparedBlobId: row.preparedBlobId, blobPath: row.blobPath, blobLength: row.blobLen });
+      if (row.blobLen === undefined)
+        throw new Error("reclaim_blob_length_missing");
+      rows.push({
+        preparedBlobId: row.preparedBlobId,
+        blobPath: row.blobPath,
+        blobLength: row.blobLen,
+      });
     }
     return { rows, skippedReferenced: selected.skippedReferenced };
   }
 
-  public async reclaimFinalizedOrphans(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> {
+  public async reclaimFinalizedOrphans(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]> {
     return (await this.selectFinalizedOrphansForReclaim(input)).rows;
   }
 
@@ -1102,19 +1258,25 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return Promise.resolve();
   }
 
-  public recoverStaleUploads(input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]> {
+  public recoverStaleUploads(
+    input: ReclaimLimitInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     const limit = checkedLimit(input.limit);
-    return Promise.resolve([...this.#prepared.values()]
-      .filter((row) => row.state === "upload_reclaim_marked")
-      .slice(0, limit)
-      .map((row) => ({
-        preparedBlobId: row.preparedBlobId,
-        stagingPath: row.stagingPath,
-        blobPath: row.blobPath,
-      })));
+    return Promise.resolve(
+      [...this.#prepared.values()]
+        .filter((row) => row.state === "upload_reclaim_marked")
+        .slice(0, limit)
+        .map((row) => ({
+          preparedBlobId: row.preparedBlobId,
+          stagingPath: row.stagingPath,
+          blobPath: row.blobPath,
+        })),
+    );
   }
 
-  public async markStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
+  public async markStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     checkedDuration(input.uploadHorizonEpochMs, "upload_horizon_ms");
     const limit = checkedLimit(input.limit);
     const rows: ReclaimUploadRow[] = [];
@@ -1122,7 +1284,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       if (rows.length === limit) {
         break;
       }
-      if (row.state !== "uploading" || row.createdAtMs >= input.uploadHorizonEpochMs) {
+      if (
+        row.state !== "uploading" ||
+        row.createdAtMs >= input.uploadHorizonEpochMs
+      ) {
         continue;
       }
       row.state = "upload_reclaim_marked";
@@ -1136,17 +1301,22 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return rows;
   }
 
-  public async reclaimStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
+  public async reclaimStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     const limit = checkedLimit(input.limit);
     const recovered = await this.recoverStaleUploads({ limit });
     const remaining = limit - recovered.length;
-    const fresh = remaining === 0
-      ? []
-      : await this.markStaleUploads({ ...input, limit: remaining });
+    const fresh =
+      remaining === 0
+        ? []
+        : await this.markStaleUploads({ ...input, limit: remaining });
     return [...recovered, ...fresh];
   }
 
-  public completeStaleUploadReclaim(preparedBlobId: PreparedWriteHandle): Promise<void> {
+  public completeStaleUploadReclaim(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void> {
     const key = asString(preparedBlobId);
     const row = this.#prepared.get(key);
     if (row === undefined) {
@@ -1159,23 +1329,35 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return Promise.resolve();
   }
 
-  public hardDeleteQuarantined(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> {
+  public hardDeleteQuarantined(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]> {
     checkedDuration(input.olderThanEpochMs, "older_than_ms");
     const limit = checkedLimit(input.limit);
-    return Promise.resolve([...this.#prepared.values()]
-      .filter((row) =>
-        row.state === "quarantined" &&
-        row.quarantinedAtMs !== undefined &&
-        row.quarantinedAtMs < input.olderThanEpochMs
-      )
-      .slice(0, limit)
-      .map((row) => {
-        if (row.blobLen === undefined) throw new Error("reclaim_blob_length_missing");
-        return { preparedBlobId: row.preparedBlobId, blobPath: row.blobPath, blobLength: row.blobLen };
-      }));
+    return Promise.resolve(
+      [...this.#prepared.values()]
+        .filter(
+          (row) =>
+            row.state === "quarantined" &&
+            row.quarantinedAtMs !== undefined &&
+            row.quarantinedAtMs < input.olderThanEpochMs,
+        )
+        .slice(0, limit)
+        .map((row) => {
+          if (row.blobLen === undefined)
+            throw new Error("reclaim_blob_length_missing");
+          return {
+            preparedBlobId: row.preparedBlobId,
+            blobPath: row.blobPath,
+            blobLength: row.blobLen,
+          };
+        }),
+    );
   }
 
-  public completeHardDeleteQuarantined(preparedBlobId: PreparedWriteHandle): Promise<void> {
+  public completeHardDeleteQuarantined(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void> {
     const key = asString(preparedBlobId);
     const row = this.#prepared.get(key);
     if (row === undefined) {
@@ -1188,7 +1370,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return Promise.resolve();
   }
 
-  public previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome> {
+  public previewReclamation(
+    input: ReclaimPreviewInput,
+  ): Promise<ReclaimPreviewOutcome> {
     checkedDuration(input.olderThanEpochMs, "older_than_ms");
     checkedDuration(input.uploadHorizonEpochMs, "upload_horizon_ms");
     checkedDuration(input.quarantinedBeforeEpochMs, "quarantined_before_ms");
@@ -1218,18 +1402,25 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
 
     const count = (predicate: (row: PreparedRow) => boolean): void => {
       if (remaining === 0) return;
-      const selected = [...this.#prepared.values()].filter(predicate).slice(0, remaining).length;
+      const selected = [...this.#prepared.values()]
+        .filter(predicate)
+        .slice(0, remaining).length;
       scanned += selected;
       reclaimed += selected;
       remaining -= selected;
     };
     count((row) => row.state === "upload_reclaim_marked");
-    count((row) => row.state === "uploading" && row.createdAtMs < input.uploadHorizonEpochMs);
+    count(
+      (row) =>
+        row.state === "uploading" &&
+        row.createdAtMs < input.uploadHorizonEpochMs,
+    );
     if (input.includeHardDelete) {
-      count((row) =>
-        row.state === "quarantined" &&
-        row.quarantinedAtMs !== undefined &&
-        row.quarantinedAtMs < input.quarantinedBeforeEpochMs
+      count(
+        (row) =>
+          row.state === "quarantined" &&
+          row.quarantinedAtMs !== undefined &&
+          row.quarantinedAtMs < input.quarantinedBeforeEpochMs,
       );
     }
     return Promise.resolve({ scanned, reclaimed, skippedReferenced });
@@ -1239,11 +1430,15 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     if (row.state !== "reclaim_marked") {
       throw new Error("invalid_path_one_recovery_state");
     }
-    if (row.blobLen === undefined) throw new Error("reclaim_blob_length_missing");
+    if (row.blobLen === undefined)
+      throw new Error("reclaim_blob_length_missing");
     if (row.quarantineBlob === undefined && row.blob === undefined) {
       throw new Error("quarantine_both_paths_absent");
     }
-    if (row.quarantineBlob !== undefined && row.quarantineBlob.length !== row.blobLen) {
+    if (
+      row.quarantineBlob !== undefined &&
+      row.quarantineBlob.length !== row.blobLen
+    ) {
       throw new Error("quarantine_length_mismatch");
     }
     if (row.blob !== undefined && row.blob.length !== row.blobLen) {
@@ -1272,8 +1467,13 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     }
   }
 
-  public async reclaimOrphanedPrepared(input: ReclaimOrphanedPreparedInput): Promise<ReclaimOutcome> {
-    const scrubbed = scrubReclaimOrphanedPreparedInput(input, this.#maintenanceLimitCap);
+  public async reclaimOrphanedPrepared(
+    input: ReclaimOrphanedPreparedInput,
+  ): Promise<ReclaimOutcome> {
+    const scrubbed = scrubReclaimOrphanedPreparedInput(
+      input,
+      this.#maintenanceLimitCap,
+    );
     const now = this.#nowEpochMilliseconds();
     let remaining = scrubbed.limit;
     let scanned = 0;
@@ -1307,7 +1507,8 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
             this.#supersedeRetentionMilliseconds,
             this.#readDrainMilliseconds,
           );
-          if (candidacy === undefined) throw new Error("superseded_candidacy_missing");
+          if (candidacy === undefined)
+            throw new Error("superseded_candidacy_missing");
           row.reclaimAfterMs = candidacy;
         }
         row.state = "reclaim_marked";
@@ -1352,7 +1553,11 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       if (remaining === 0) {
         break;
       }
-      if (row.state !== "quarantined" || row.quarantinedAtMs === undefined || row.quarantinedAtMs >= quarantineThreshold) {
+      if (
+        row.state !== "quarantined" ||
+        row.quarantinedAtMs === undefined ||
+        row.quarantinedAtMs >= quarantineThreshold
+      ) {
         continue;
       }
       visit();
@@ -1368,7 +1573,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
 
   // ---- dev-only inspection and corruption affordances (not part of either port) ----------------
 
-  public debugPrepared(preparedBlobId: PreparedWriteHandle): PreparedControlPlaneSnapshot | undefined {
+  public debugPrepared(
+    preparedBlobId: PreparedWriteHandle,
+  ): PreparedControlPlaneSnapshot | undefined {
     const row = this.#prepared.get(asString(preparedBlobId));
     if (row === undefined) {
       return undefined;
@@ -1403,7 +1610,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return [...this.#prepared.values()].map((row) => row.preparedBlobId);
   }
 
-  public debugClaim(idempotencyKey: ReversalIdempotencyKey): ClaimControlPlaneSnapshot | undefined {
+  public debugClaim(
+    idempotencyKey: ReversalIdempotencyKey,
+  ): ClaimControlPlaneSnapshot | undefined {
     const claim = this.#claims.get(asString(idempotencyKey));
     if (claim === undefined) {
       return undefined;
@@ -1421,7 +1630,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     };
   }
 
-  public debugCurrent(mappingKey: ReversalMappingKey): CurrentControlPlaneSnapshot | undefined {
+  public debugCurrent(
+    mappingKey: ReversalMappingKey,
+  ): CurrentControlPlaneSnapshot | undefined {
     const current = this.#current.get(asString(mappingKey));
     return current === undefined ? undefined : { ...current };
   }
@@ -1434,7 +1645,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     delete row.blob;
   }
 
-  public debugSetPreparedCreatedAtMs(preparedBlobId: PreparedWriteHandle, createdAtMs: number): void {
+  public debugSetPreparedCreatedAtMs(
+    preparedBlobId: PreparedWriteHandle,
+    createdAtMs: number,
+  ): void {
     checkedDuration(createdAtMs, "debug_created_at_ms");
     const key = asString(preparedBlobId);
     const row = this.#prepared.get(key);
@@ -1485,7 +1699,11 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     } else {
       delete row.quarantinedAtMs;
     }
-    if (state !== "superseded" && state !== "reclaim_marked" && state !== "quarantined") {
+    if (
+      state !== "superseded" &&
+      state !== "reclaim_marked" &&
+      state !== "quarantined"
+    ) {
       delete row.supersededAtMs;
       delete row.reclaimAfterMs;
     }
@@ -1508,7 +1726,10 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     delete row.reclaimAfterMs;
   }
 
-  public debugOperationRetention(tenant: string, attempt: string): "matter" | "detector-only" | undefined {
+  public debugOperationRetention(
+    tenant: string,
+    attempt: string,
+  ): "matter" | "detector-only" | undefined {
     return this.#operationRetention.get(`${tenant}\0${attempt}`);
   }
 

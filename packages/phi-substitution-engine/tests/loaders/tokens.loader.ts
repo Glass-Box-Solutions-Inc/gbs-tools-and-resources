@@ -10,7 +10,11 @@ import type {
   TokenizedText,
   TokenRole,
 } from "../../src/core/brands";
-import type { ReversalHandle, ReversalStore, ReversalWriteStore } from "../../src/core/contracts";
+import type {
+  ReversalHandle,
+  ReversalStore,
+  ReversalWriteStore,
+} from "../../src/core/contracts";
 import {
   createTokensModule,
   InProcessReversalHandle,
@@ -102,12 +106,14 @@ class SpyReversalStore implements ReversalStore {
   get maximumEncounteredTokenBatch(): number {
     return this.inner.maximumEncounteredTokenBatch;
   }
-  async resolveEncounteredTokens(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: DictionaryVersion;
-    tokens: readonly SubstitutionToken[];
-  }>): Promise<ReadonlyMap<SubstitutionToken, string>> {
+  async resolveEncounteredTokens(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: DictionaryVersion;
+      tokens: readonly SubstitutionToken[];
+    }>,
+  ): Promise<ReadonlyMap<SubstitutionToken, string>> {
     this.calls += 1;
     for (const t of input.tokens) {
       this.lookedUp.push(String(t));
@@ -159,7 +165,10 @@ async function runStream(
   return { chunks, error };
 }
 
-function newHandle(module: TokensModule, tenantId: TenantId = TENANT): ReversalHandle {
+function newHandle(
+  module: TokensModule,
+  tenantId: TenantId = TENANT,
+): ReversalHandle {
   void module;
   return new InProcessReversalHandle({
     tenantId,
@@ -206,12 +215,17 @@ async function runCase(
           }),
         );
       }
-      return { ...baseObservation(), tokensBySubject, dictionaryVersion: V2.toString() };
+      return {
+        ...baseObservation(),
+        tokensBySubject,
+        dictionaryVersion: V2.toString(),
+      };
     }
 
     case "M-L1-COALESCE-BY-TEXT-ONLY": {
       const subjects =
-        (fixture.subjects as { id: string; value: string; role: string }[]) ?? [];
+        (fixture.subjects as { id: string; value: string; role: string }[]) ??
+        [];
       const tokensBySubject: Record<string, string> = {};
       for (const s of subjects) {
         // Identity carries subject+role; the display value is never passed in,
@@ -248,15 +262,28 @@ async function runCase(
       const providerOut = String(escaped.text);
       const reversed = await reverseText(
         providerOut,
-        { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, operationId: OP },
+        {
+          tenantId: TENANT,
+          matterId: MATTER,
+          dictionaryVersion: V1,
+          operationId: OP,
+        },
         module.reversalStore,
         module.grammar,
         module.policy,
       );
       const displayText = String(
-        module.escaper.restoreLiterals(reversed as TokenizedText, escaped.literals),
+        module.escaper.restoreLiterals(
+          reversed as TokenizedText,
+          escaped.literals,
+        ),
       );
-      return { ...baseObservation(), displayText, tokenizedText: providerOut, reversedText: reversed };
+      return {
+        ...baseObservation(),
+        displayText,
+        tokenizedText: providerOut,
+        reversedText: reversed,
+      };
     }
 
     // ---- N2: reversal handle is non-serializable (holds refs, never a map) ----
@@ -275,7 +302,11 @@ async function runCase(
           diagnostics.add(DIAG_REVERSAL_HANDLE_NOT_SERIALIZABLE);
         }
       }
-      return { ...baseObservation(), buildPassed, diagnostics: [...diagnostics] };
+      return {
+        ...baseObservation(),
+        buildPassed,
+        diagnostics: [...diagnostics],
+      };
     }
 
     // ---- N2: store resolves only the encountered tokens, in one bounded lookup ----
@@ -308,7 +339,12 @@ async function runCase(
       const spy = new SpyReversalStore(module.reversalStore);
       const reversed = await reverseText(
         providerText,
-        { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, operationId: OP },
+        {
+          tenantId: TENANT,
+          matterId: MATTER,
+          dictionaryVersion: V1,
+          operationId: OP,
+        },
         spy,
         module.grammar,
         module.policy,
@@ -334,12 +370,21 @@ async function runCase(
       });
       const reversed = await reverseText(
         providerText,
-        { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, operationId: OP },
+        {
+          tenantId: TENANT,
+          matterId: MATTER,
+          dictionaryVersion: V1,
+          operationId: OP,
+        },
         module.reversalStore,
         module.grammar,
         module.policy,
       );
-      return { ...baseObservation(), displayText: reversed, reversedText: reversed };
+      return {
+        ...baseObservation(),
+        displayText: reversed,
+        reversedText: reversed,
+      };
     }
 
     // ---- N5: unknown/malformed tokens fail atomically, no raw chunk shown ----
@@ -348,14 +393,23 @@ async function runCase(
       try {
         const reversed = await reverseText(
           providerText,
-          { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, operationId: OP },
+          {
+            tenantId: TENANT,
+            matterId: MATTER,
+            dictionaryVersion: V1,
+            operationId: OP,
+          },
           module.reversalStore,
           module.grammar,
           module.policy,
         );
         return { ...baseObservation(), displayText: reversed };
       } catch (thrown) {
-        return { ...baseObservation(), displayText: null, errorCode: failureCode(thrown) };
+        return {
+          ...baseObservation(),
+          displayText: null,
+          errorCode: failureCode(thrown),
+        };
       }
     }
 
@@ -384,7 +438,12 @@ async function runCase(
       if (representative.error) {
         errorCode = representative.error;
       }
-      return { ...baseObservation(), outputs, displayChunks: representative.chunks, errorCode };
+      return {
+        ...baseObservation(),
+        outputs,
+        displayChunks: representative.chunks,
+        errorCode,
+      };
     }
 
     // ---- L4: M-1 UTF-16 holdback keeps the longest token whole across every split ----
@@ -415,7 +474,11 @@ async function runCase(
       const chunks = (fixture.chunks as string[]) ?? [];
       const handle = newHandle(module);
       const result = await runStream(chunks, module, handle);
-      return { ...baseObservation(), displayChunks: result.chunks, errorCode: result.error };
+      return {
+        ...baseObservation(),
+        displayChunks: result.chunks,
+        errorCode: result.error,
+      };
     }
 
     // ---- L8: tenant is part of every reversal key; cross-tenant reversal misses ----
@@ -433,14 +496,23 @@ async function runCase(
       try {
         const reversed = await reverseText(
           "[[Claimant]] reported the injury.",
-          { tenantId: handleTenant, matterId: sharedMatter, dictionaryVersion: V1, operationId: OP },
+          {
+            tenantId: handleTenant,
+            matterId: sharedMatter,
+            dictionaryVersion: V1,
+            operationId: OP,
+          },
           module.reversalStore,
           module.grammar,
           module.policy,
         );
         return { ...baseObservation(), displayText: reversed };
       } catch (thrown) {
-        return { ...baseObservation(), displayText: null, errorCode: failureCode(thrown) };
+        return {
+          ...baseObservation(),
+          displayText: null,
+          errorCode: failureCode(thrown),
+        };
       }
     }
 
@@ -459,11 +531,24 @@ async function runCase(
       const updatedCanonical = "Maria García (corrected)";
       const attemptA = attempt((fixture.attemptId as string) ?? "att-replay-1");
       const attemptB = attempt("att-update-2");
-      const writeBase = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, token: tk };
+      const writeBase = {
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        token: tk,
+      };
       // Write under attempt A, then REPLAY under the SAME attempt with a DIVERGENT payload (a retry
       // whose body differs): the replay MUST be a no-op — the first canonical stands.
-      store.record({ ...writeBase, canonical: firstCanonical, attemptId: attemptA });
-      store.record({ ...writeBase, canonical: divergentCanonical, attemptId: attemptA });
+      store.record({
+        ...writeBase,
+        canonical: firstCanonical,
+        attemptId: attemptA,
+      });
+      store.record({
+        ...writeBase,
+        canonical: divergentCanonical,
+        attemptId: attemptA,
+      });
       const afterReplay = await store.resolveEncounteredTokens({
         tenantId: TENANT,
         matterId: MATTER,
@@ -471,7 +556,11 @@ async function runCase(
         tokens: [tk, tk],
       });
       // A DIFFERENT attempt is allowed to update the current canonical.
-      store.record({ ...writeBase, canonical: updatedCanonical, attemptId: attemptB });
+      store.record({
+        ...writeBase,
+        canonical: updatedCanonical,
+        attemptId: attemptB,
+      });
       const afterUpdate = await store.resolveEncounteredTokens({
         tenantId: TENANT,
         matterId: MATTER,
@@ -529,7 +618,11 @@ async function runCase(
       return {
         ...baseObservation(),
         reversalLookupTokens: [...within.keys()].map(String),
-        metrics: { batchLimit: limit, overLimitRejected, withinBoundSize: within.size },
+        metrics: {
+          batchLimit: limit,
+          overLimitRejected,
+          withinBoundSize: within.size,
+        },
       };
     }
 
@@ -540,16 +633,30 @@ async function runCase(
       const store: ReversalWriteStore = module.reversalStore;
       const asRecord = store as unknown as Record<string, unknown>;
       const forbidden = [
-        "list", "listAll", "all", "entries", "keys", "values",
-        "dump", "export", "getAll", "scan", "enumerate", "snapshot", "toJSON",
+        "list",
+        "listAll",
+        "all",
+        "entries",
+        "keys",
+        "values",
+        "dump",
+        "export",
+        "getAll",
+        "scan",
+        "enumerate",
+        "snapshot",
+        "toJSON",
       ];
-      const present = forbidden.filter((name) => typeof asRecord[name] === "function");
+      const present = forbidden.filter(
+        (name) => typeof asRecord[name] === "function",
+      );
       return {
         ...baseObservation(),
         diagnostics: present.map((name) => `FORBIDDEN_ENUMERATION_API:${name}`),
         metrics: {
           listAllApisPresent: present.length,
-          hasBoundedResolve: typeof asRecord.resolveEncounteredTokens === "function",
+          hasBoundedResolve:
+            typeof asRecord.resolveEncounteredTokens === "function",
           hasRecord: typeof asRecord.record === "function",
         },
       };
@@ -562,7 +669,10 @@ async function runCase(
 
 export function loadTokensHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return runCase(caseId, fixture);
     },
   };

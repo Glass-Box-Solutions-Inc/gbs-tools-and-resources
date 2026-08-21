@@ -31,7 +31,10 @@ import type {
   PhiAuditEvent,
   PhiAuditPreparedRecord,
 } from "../../src/audit/ports";
-import type { SpoolKeyProvider, SpoolVolume } from "../../src/audit/spool-ports";
+import type {
+  SpoolKeyProvider,
+  SpoolVolume,
+} from "../../src/audit/spool-ports";
 
 import {
   InMemoryCaseTruthReader,
@@ -81,12 +84,15 @@ const tenant = (s: string): TenantId => s as unknown as TenantId;
 const matter = (s: string): MatterId => s as unknown as MatterId;
 const actor = (s: string): ActorId => s as unknown as ActorId;
 const op = (s: string): OperationId => s as unknown as OperationId;
-const attempt = (s: string): OperationAttemptId => s as unknown as OperationAttemptId;
+const attempt = (s: string): OperationAttemptId =>
+  s as unknown as OperationAttemptId;
 const schema = (s: string): SchemaVersion => s as unknown as SchemaVersion;
 const engine = (s: string): EngineVersion => s as unknown as EngineVersion;
-const version = (n: bigint): DictionaryVersion => n as unknown as DictionaryVersion;
+const version = (n: bigint): DictionaryVersion =>
+  n as unknown as DictionaryVersion;
 const role = (s: string): TokenRole => s as unknown as TokenRole;
-const token = (s: string): SubstitutionToken => s as unknown as SubstitutionToken;
+const token = (s: string): SubstitutionToken =>
+  s as unknown as SubstitutionToken;
 const locale = (s: string): TrustedMatterAiPolicy["locale"] =>
   s as unknown as TrustedMatterAiPolicy["locale"];
 
@@ -147,8 +153,20 @@ function taggedValue(
 
 /** On-file, schema-tagged case truth covering every seeded canary. */
 const DEFAULT_KNOWN_VALUES: readonly TaggedValue[] = [
-  taggedValue("s-maria", "PERSON_NAME", "Maria García", "Claimant", "person-name"),
-  taggedValue("s-robert", "PERSON_NAME", "Robert O'Neil", "Claimant", "person-name"),
+  taggedValue(
+    "s-maria",
+    "PERSON_NAME",
+    "Maria García",
+    "Claimant",
+    "person-name",
+  ),
+  taggedValue(
+    "s-robert",
+    "PERSON_NAME",
+    "Robert O'Neil",
+    "Claimant",
+    "person-name",
+  ),
   taggedValue("s-ssn", "SSN", "078-05-1120", "SSN", "literal"),
   taggedValue("s-mrn", "MRN", "MRN-A7719", "MRN", "literal"),
   taggedValue("s-dea", "DEA", "DEA-AB1234567", "DEA", "literal"),
@@ -169,7 +187,10 @@ interface AuditGate {
 }
 
 /** N3 boundary model: the raw provider is reachable only after a durable PREPARE. */
-class FakeRawProvider implements RawProviderPort<BoundaryGenerateOptions, string> {
+class FakeRawProvider implements RawProviderPort<
+  BoundaryGenerateOptions,
+  string
+> {
   public calls = 0;
   public readonly payloads: string[] = [];
 
@@ -179,7 +200,9 @@ class FakeRawProvider implements RawProviderPort<BoundaryGenerateOptions, string
     private readonly streamChunks: readonly string[],
   ) {}
 
-  public generateText(options: BoundaryGenerateOptions): Promise<TokenizedText> {
+  public generateText(
+    options: BoundaryGenerateOptions,
+  ): Promise<TokenizedText> {
     this.#guard();
     this.calls += 1;
     this.payloads.push(JSON.stringify(options));
@@ -198,7 +221,10 @@ class FakeRawProvider implements RawProviderPort<BoundaryGenerateOptions, string
     }
   }
 
-  public embedText(text: TokenizedText, _kind: string): Promise<readonly number[]> {
+  public embedText(
+    text: TokenizedText,
+    _kind: string,
+  ): Promise<readonly number[]> {
     this.#guard();
     this.calls += 1;
     this.payloads.push(String(text));
@@ -208,7 +234,11 @@ class FakeRawProvider implements RawProviderPort<BoundaryGenerateOptions, string
   #guard(): void {
     // N3/N4: no provider egress before a durable PREPARED record exists.
     if (!this.gate.prepared) {
-      throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", CONTEXT.operationId, {});
+      throw new PhiEngineError(
+        "AUDIT_DURABILITY_UNAVAILABLE",
+        CONTEXT.operationId,
+        {},
+      );
     }
   }
 }
@@ -217,7 +247,9 @@ class FakeRawProvider implements RawProviderPort<BoundaryGenerateOptions, string
 class FakeSafeTrace implements SafeAiTrace {
   public readonly payloads: string[] = [];
 
-  public request(paths: readonly Readonly<{ path: string; text: TokenizedText }>[]): Promise<void> {
+  public request(
+    paths: readonly Readonly<{ path: string; text: TokenizedText }>[],
+  ): Promise<void> {
     for (const entry of paths) {
       this.payloads.push(String(entry.text));
     }
@@ -229,7 +261,9 @@ class FakeSafeTrace implements SafeAiTrace {
     return Promise.resolve();
   }
 
-  public metadata(_values: Readonly<Record<string, string | number | boolean | null>>): Promise<void> {
+  public metadata(
+    _values: Readonly<Record<string, string | number | boolean | null>>,
+  ): Promise<void> {
     // Metadata is counts/IDs only; it never carries content.
     return Promise.resolve();
   }
@@ -253,15 +287,24 @@ class FakePrimaryStore implements AuditPrimaryStore {
   > {
     this.prepareAttempts += 1;
     if (!this.available) {
-      return Promise.resolve({ status: "unavailable", fixedFailureCode: "AUDIT_PRIMARY_UNAVAILABLE" });
+      return Promise.resolve({
+        status: "unavailable",
+        fixedFailureCode: "AUDIT_PRIMARY_UNAVAILABLE",
+      });
     }
     this.gate.prepared = true;
     const id = record.attemptId as unknown as string;
     if (this.#prepared.has(id)) {
-      return Promise.resolve({ status: "already_exists", durableRecordId: `primary:${id}` });
+      return Promise.resolve({
+        status: "already_exists",
+        durableRecordId: `primary:${id}`,
+      });
     }
     this.#prepared.add(id);
-    return Promise.resolve({ status: "stored", durableRecordId: `primary:${id}` });
+    return Promise.resolve({
+      status: "stored",
+      durableRecordId: `primary:${id}`,
+    });
   }
 
   public finalize(event: PhiAuditEvent): Promise<void> {
@@ -274,7 +317,10 @@ class InMemorySpoolVolume implements SpoolVolume {
   public durable = true;
   readonly #store = new Map<string, Uint8Array>();
 
-  public putAtomic(recordId: string, bytes: Uint8Array): Promise<Readonly<{ flushed: boolean }>> {
+  public putAtomic(
+    recordId: string,
+    bytes: Uint8Array,
+  ): Promise<Readonly<{ flushed: boolean }>> {
     this.#store.set(recordId, Uint8Array.from(bytes));
     return Promise.resolve({ flushed: true });
   }
@@ -302,7 +348,9 @@ class FixedKeyProvider implements SpoolKeyProvider {
 class RecordingProjector implements AiProviderOptionProjector<BoundaryGenerateOptions> {
   public classifiedPathCount = 0;
   public constructor(private readonly inner: StructuralOptionsProjector) {}
-  public classify(options: BoundaryGenerateOptions): ClassifiedProviderOptions<BoundaryGenerateOptions> {
+  public classify(
+    options: BoundaryGenerateOptions,
+  ): ClassifiedProviderOptions<BoundaryGenerateOptions> {
     const classified = this.inner.classify(options);
     this.classifiedPathCount = classified.segments.length;
     return classified;
@@ -310,9 +358,10 @@ class RecordingProjector implements AiProviderOptionProjector<BoundaryGenerateOp
 }
 
 /** Records the routed provider id so L11 selection is observable. */
-class RecordingRouter
-  implements OriginalContentProviderRouter<BoundaryGenerateOptions, RawProviderPort<BoundaryGenerateOptions, string>>
-{
+class RecordingRouter implements OriginalContentProviderRouter<
+  BoundaryGenerateOptions,
+  RawProviderPort<BoundaryGenerateOptions, string>
+> {
   public selectedProvider: string | null = null;
   public constructor(
     private readonly inner: OriginalContentBaaRouter<
@@ -322,7 +371,9 @@ class RecordingRouter
   ) {}
   public async selectUsingOriginalContent(
     options: BoundaryGenerateOptions,
-  ): Promise<ProviderRoutingDecision<RawProviderPort<BoundaryGenerateOptions, string>>> {
+  ): Promise<
+    ProviderRoutingDecision<RawProviderPort<BoundaryGenerateOptions, string>>
+  > {
     const decision = await this.inner.selectUsingOriginalContent(options);
     this.selectedProvider = decision.providerId;
     return decision;
@@ -338,7 +389,8 @@ function extractOriginalText(options: BoundaryGenerateOptions): string {
     }
   }
   for (const tool of options.tools ?? []) parts.push(tool.description);
-  if (typeof options.embeddingText === "string") parts.push(options.embeddingText);
+  if (typeof options.embeddingText === "string")
+    parts.push(options.embeddingText);
   return parts.join("\n");
 }
 
@@ -372,7 +424,10 @@ interface RigOptions {
 }
 
 interface Rig {
-  readonly wrapper: ComposedProtectedAiProvider<BoundaryGenerateOptions, string>;
+  readonly wrapper: ComposedProtectedAiProvider<
+    BoundaryGenerateOptions,
+    string
+  >;
   readonly provider: FakeRawProvider;
   readonly trace: FakeSafeTrace;
   readonly router: RecordingRouter;
@@ -389,7 +444,12 @@ function makeRig(opts: RigOptions): Rig {
 
   const truthReader = new InMemoryCaseTruthReader();
   truthReader.set(
-    { tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, sourceTruthRevision: REVISION },
+    {
+      tenantId: TENANT,
+      matterId: MATTER,
+      dictionaryVersion: VERSION,
+      sourceTruthRevision: REVISION,
+    },
     opts.knownValues ?? DEFAULT_KNOWN_VALUES,
   );
 
@@ -414,8 +474,17 @@ function makeRig(opts: RigOptions): Rig {
   );
 
   const primary = new FakePrimaryStore(gate);
-  const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume(), new FixedKeyProvider(), CLOCK);
-  const emitter = new DurablePhiAuditEmitter(primary, spool, new ExactAllowListAuditSerializer(), CLOCK);
+  const spool = new Aes256GcmAuditSpool(
+    new InMemorySpoolVolume(),
+    new FixedKeyProvider(),
+    CLOCK,
+  );
+  const emitter = new DurablePhiAuditEmitter(
+    primary,
+    spool,
+    new ExactAllowListAuditSerializer(),
+    CLOCK,
+  );
 
   const routerInputHolder: { value: string | null } = { value: null };
 
@@ -436,7 +505,9 @@ function makeRig(opts: RigOptions): Rig {
     nonBaaProviderId: "openai",
     claudeBaaEnabled: opts.claudeBaaEnabled ?? true,
     matterIsPhiTagged: opts.matterIsPhiTagged ?? true,
-    ...(opts.forcedProviderId !== undefined ? { forcedProviderId: opts.forcedProviderId } : {}),
+    ...(opts.forcedProviderId !== undefined
+      ? { forcedProviderId: opts.forcedProviderId }
+      : {}),
     ...(opts.forcedProviderBaaCovered !== undefined
       ? { forcedProviderBaaCovered: opts.forcedProviderBaaCovered }
       : {}),
@@ -445,9 +516,14 @@ function makeRig(opts: RigOptions): Rig {
       : {}),
   };
 
-  const router = new RecordingRouter(new OriginalContentBaaRouter(routerConfig));
+  const router = new RecordingRouter(
+    new OriginalContentBaaRouter(routerConfig),
+  );
 
-  const wrapper = new ComposedProtectedAiProvider<BoundaryGenerateOptions, string>({
+  const wrapper = new ComposedProtectedAiProvider<
+    BoundaryGenerateOptions,
+    string
+  >({
     engine: engineInstance,
     context: CONTEXT_ACCESSOR,
     policy: POLICY_ACCESSOR,
@@ -458,7 +534,9 @@ function makeRig(opts: RigOptions): Rig {
     invokeRaw: provider,
     engineVersion: ENGINE,
     clock: CLOCK,
-    embeddingOptionsFactory: (text: string): BoundaryGenerateOptions => ({ embeddingText: text }),
+    embeddingOptionsFactory: (text: string): BoundaryGenerateOptions => ({
+      embeddingText: text,
+    }),
   });
 
   return { wrapper, provider, trace, router, projector, routerInputHolder };
@@ -531,21 +609,33 @@ async function runCase(
       const rig = makeRig({ providerResponseText: "[[Claimant]]" });
       const options: BoundaryGenerateOptions = {
         system: "Assist Maria García.",
-        messages: [{ role: "user", content: [{ type: "text", text: "Contact Robert O'Neil." }] }],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Contact Robert O'Neil." }],
+          },
+        ],
         tools: [{ name: "lookup", description: "Look up MRN-A7719 details." }],
       };
       const display = await rig.wrapper.generateText(options);
-      return { ...baseObservation(), ...observeRig(rig), displayText: String(display) };
+      return {
+        ...baseObservation(),
+        ...observeRig(rig),
+        displayText: String(display),
+      };
     }
 
     // ---- N1: streaming egress is tokenized before the provider ----
     case "M-N1-DIRECT-STREAM": {
       const input = asString(fixture["input"], "Maria García MRN-A7719");
-      const rig = makeRig({ providerStreamChunks: ["[[Claimant]] ", "[[MRN]]"] });
+      const rig = makeRig({
+        providerStreamChunks: ["[[Claimant]] ", "[[MRN]]"],
+      });
       const options: BoundaryGenerateOptions = {
         messages: [{ role: "user", content: [{ type: "text", text: input }] }],
       };
-      const result: ProtectedStreamResult = await rig.wrapper.generateStream(options);
+      const result: ProtectedStreamResult =
+        await rig.wrapper.generateStream(options);
       return {
         ...baseObservation(),
         ...observeRig(rig),
@@ -567,18 +657,28 @@ async function runCase(
 
     // ---- N2: request traces accept safe (post-substitution) text only ----
     case "M-N2-TRACE-BEFORE-SUBSTITUTE": {
-      const input = asString(fixture["input"], "Maria García at 412 May Street");
+      const input = asString(
+        fixture["input"],
+        "Maria García at 412 May Street",
+      );
       const rig = makeRig({ providerResponseText: "[[Claimant]]" });
       const options: BoundaryGenerateOptions = {
         messages: [{ role: "user", content: [{ type: "text", text: input }] }],
       };
       const display = await rig.wrapper.generateText(options);
-      return { ...baseObservation(), ...observeRig(rig), displayText: String(display) };
+      return {
+        ...baseObservation(),
+        ...observeRig(rig),
+        displayText: String(display),
+      };
     }
 
     // ---- N2: output traces remain tokenized; display is reversed ----
     case "M-N2-TRACE-AFTER-REVERSE": {
-      const providerOutput = asString(fixture["providerOutput"], "[[Claimant]] lives at [[Address]].");
+      const providerOutput = asString(
+        fixture["providerOutput"],
+        "[[Claimant]] lives at [[Address]].",
+      );
       const rig = makeRig({
         providerResponseText: providerOutput,
         seedReversal: (store): void => {
@@ -599,10 +699,19 @@ async function runCase(
         },
       });
       const options: BoundaryGenerateOptions = {
-        messages: [{ role: "user", content: [{ type: "text", text: "Summarize the record." }] }],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Summarize the record." }],
+          },
+        ],
       };
       const display = await rig.wrapper.generateText(options);
-      return { ...baseObservation(), ...observeRig(rig), displayText: String(display) };
+      return {
+        ...baseObservation(),
+        ...observeRig(rig),
+        displayText: String(display),
+      };
     }
 
     // ---- L5: every known text option path is projected (exhaustive) ----
@@ -611,8 +720,14 @@ async function runCase(
       const options: BoundaryGenerateOptions = {
         system: "Assist Maria García.",
         messages: [
-          { role: "user", content: [{ type: "text", text: "Contact Robert O'Neil." }] },
-          { role: "user", content: [{ type: "text", text: "SSN 078-05-1120 on file." }] },
+          {
+            role: "user",
+            content: [{ type: "text", text: "Contact Robert O'Neil." }],
+          },
+          {
+            role: "user",
+            content: [{ type: "text", text: "SSN 078-05-1120 on file." }],
+          },
         ],
         tools: [{ name: "lookup", description: "Look up MRN-A7719 details." }],
       };
@@ -630,13 +745,16 @@ async function runCase(
 
     // ---- L5: a new/unknown text field fails closed before egress ----
     case "M-L5-ALLOW-UNKNOWN-TEXT-FIELD": {
-      const rawOptions =
-        (fixture["options"] as Record<string, unknown> | undefined) ?? {
-          futureProviderField: "Maria García",
-        };
+      const rawOptions = (fixture["options"] as
+        | Record<string, unknown>
+        | undefined) ?? {
+        futureProviderField: "Maria García",
+      };
       const rig = makeRig({});
       try {
-        await rig.wrapper.generateText(rawOptions as unknown as BoundaryGenerateOptions);
+        await rig.wrapper.generateText(
+          rawOptions as unknown as BoundaryGenerateOptions,
+        );
         return { ...baseObservation(), ...observeRig(rig) };
       } catch (error) {
         return {
@@ -656,7 +774,12 @@ async function runCase(
         forcedProductionSafe: asBool(fixture["isProductionSafe"], false),
       });
       const options: BoundaryGenerateOptions = {
-        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Maria García update." }],
+          },
+        ],
       };
       try {
         await rig.wrapper.generateText(options);
@@ -672,14 +795,26 @@ async function runCase(
 
     // ---- L11: BAA routing inspects ORIGINAL content, not the substituted text ----
     case "M-L11-ROUTE-AFTER-SUBSTITUTE": {
-      const original = asString(fixture["original"], "Claimant Maria García has MRN-A7719.");
+      const original = asString(
+        fixture["original"],
+        "Claimant Maria García has MRN-A7719.",
+      );
       const phiTagged = asBool(fixture["phiTaggedMatter"], true);
-      const rig = makeRig({ matterIsPhiTagged: phiTagged, providerResponseText: "[[Claimant]]" });
+      const rig = makeRig({
+        matterIsPhiTagged: phiTagged,
+        providerResponseText: "[[Claimant]]",
+      });
       const options: BoundaryGenerateOptions = {
-        messages: [{ role: "user", content: [{ type: "text", text: original }] }],
+        messages: [
+          { role: "user", content: [{ type: "text", text: original }] },
+        ],
       };
       const display = await rig.wrapper.generateText(options);
-      return { ...baseObservation(), ...observeRig(rig), displayText: String(display) };
+      return {
+        ...baseObservation(),
+        ...observeRig(rig),
+        displayText: String(display),
+      };
     }
 
     default:
@@ -689,7 +824,10 @@ async function runCase(
 
 export function loadProviderBoundaryHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return runCase(caseId, fixture);
     },
   };

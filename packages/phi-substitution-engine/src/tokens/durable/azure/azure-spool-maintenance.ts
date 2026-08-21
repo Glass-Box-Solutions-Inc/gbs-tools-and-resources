@@ -69,21 +69,32 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
   public constructor(options: AzureSpoolMaintenanceOptions) {
     this.#controlPlane = options.controlPlane;
     this.#blobStore = options.blobStore;
-    this.#uploadHorizonMs = checkedDuration(options.uploadHorizonMs, "upload_horizon");
+    this.#uploadHorizonMs = checkedDuration(
+      options.uploadHorizonMs,
+      "upload_horizon",
+    );
     this.#graceMs = checkedDuration(options.graceMs, "grace");
     this.#supersedeRetentionMs = checkedDuration(
       options.supersedeRetentionMs ?? DEFAULT_SUPERSEDE_RETENTION_MS,
       "supersede_retention",
     );
-    this.#readDrainMs = checkedDuration(options.readDrainMs ?? DEFAULT_READ_DRAIN_MS, "read_drain");
-    if (this.#supersedeRetentionMs < this.#graceMs || this.#graceMs < this.#readDrainMs) {
+    this.#readDrainMs = checkedDuration(
+      options.readDrainMs ?? DEFAULT_READ_DRAIN_MS,
+      "read_drain",
+    );
+    if (
+      this.#supersedeRetentionMs < this.#graceMs ||
+      this.#graceMs < this.#readDrainMs
+    ) {
       throw new Error("azure_spool_maintenance_invalid_retention_window_order");
     }
     this.#now = options.now ?? Date.now;
     this.#includeHardDelete = options.includeHardDelete ?? true;
   }
 
-  public async reclaimOrphanedPrepared(input: ReclaimOrphanedPreparedInput): Promise<ReclaimOutcome> {
+  public async reclaimOrphanedPrepared(
+    input: ReclaimOrphanedPreparedInput,
+  ): Promise<ReclaimOutcome> {
     // Scrub the hostile caller-owned surface before reading the clock or touching either substrate.
     const scrubbed = scrubReclaimOrphanedPreparedInput(input);
     const nowEpochMs = checkedNow(this.#now());
@@ -117,7 +128,9 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     // Path 2b recovery gets priority so a steady stream of fresh stale uploads cannot starve a
     // crash-left upload_reclaim_marked row. This is still one combined Path-2 budget.
     if (remaining > 0) {
-      const recovery = await this.#controlPlane.recoverStaleUploads({ limit: remaining });
+      const recovery = await this.#controlPlane.recoverStaleUploads({
+        limit: remaining,
+      });
       this.#assertWithinBudget(recovery.length, remaining, "path_two_recovery");
       remaining -= recovery.length;
       scanned += recovery.length;
@@ -130,7 +143,11 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
         uploadHorizonEpochMs: Math.max(0, nowEpochMs - this.#uploadHorizonMs),
         limit: remaining,
       });
-      this.#assertWithinBudget(freshlyMarked.length, remaining, "path_two_mark");
+      this.#assertWithinBudget(
+        freshlyMarked.length,
+        remaining,
+        "path_two_mark",
+      );
       remaining -= freshlyMarked.length;
       scanned += freshlyMarked.length;
       reclaimed += await this.#finishUploadRows(freshlyMarked);
@@ -150,7 +167,9 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
       for (const row of hardDelete) {
         const path = quarantinePath(row.preparedBlobId);
         await this.#removeAndConfirmAbsent(path);
-        await this.#controlPlane.completeHardDeleteQuarantined(row.preparedBlobId);
+        await this.#controlPlane.completeHardDeleteQuarantined(
+          row.preparedBlobId,
+        );
         reclaimed += 1;
       }
     }
@@ -167,8 +186,10 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
       }
       // A prior worker completed the rename. Remove a divergent leftover original defensively.
       await this.#removeIdempotently(row.blobPath);
-      if (await this.#blobStore.head(row.blobPath) !== undefined) {
-        throw new Error("azure_spool_maintenance_quarantine_original_still_present");
+      if ((await this.#blobStore.head(row.blobPath)) !== undefined) {
+        throw new Error(
+          "azure_spool_maintenance_quarantine_original_still_present",
+        );
       }
       return;
     }
@@ -185,7 +206,7 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
       if (statusCodeOf(error) === 404) {
         // The source may have disappeared because a peer won the same move. Verification below
         // decides whether that is success; source+destination absence is never success.
-      } else if (await this.#blobStore.head(destination) !== undefined) {
+      } else if ((await this.#blobStore.head(destination)) !== undefined) {
         await this.#removeIdempotently(row.blobPath);
       } else {
         throw error;
@@ -198,8 +219,10 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     if (BigInt(verifiedDestination.len) !== row.blobLength) {
       throw new Error("azure_spool_maintenance_quarantine_length_mismatch");
     }
-    if (await this.#blobStore.head(row.blobPath) !== undefined) {
-      throw new Error("azure_spool_maintenance_quarantine_original_still_present");
+    if ((await this.#blobStore.head(row.blobPath)) !== undefined) {
+      throw new Error(
+        "azure_spool_maintenance_quarantine_original_still_present",
+      );
     }
   }
 
@@ -226,13 +249,17 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
 
   async #removeAndConfirmAbsent(path: string): Promise<void> {
     await this.#removeIdempotently(path);
-    if (await this.#blobStore.head(path) !== undefined) {
+    if ((await this.#blobStore.head(path)) !== undefined) {
       throw new Error("azure_spool_maintenance_remove_not_confirmed");
     }
   }
 
   #assertWithinBudget(selected: number, remaining: number, path: string): void {
-    if (!Number.isSafeInteger(selected) || selected < 0 || selected > remaining) {
+    if (
+      !Number.isSafeInteger(selected) ||
+      selected < 0 ||
+      selected > remaining
+    ) {
       throw new Error(`azure_spool_maintenance_${path}_budget_violation`);
     }
   }

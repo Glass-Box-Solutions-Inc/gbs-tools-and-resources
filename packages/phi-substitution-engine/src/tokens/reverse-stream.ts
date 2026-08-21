@@ -1,12 +1,22 @@
 import type { DisplayText, TokenizedText } from "../core/brands";
-import type { ReversalHandle, ReversalStore, ReverseStream } from "../core/contracts";
+import type {
+  ReversalHandle,
+  ReversalStore,
+  ReverseStream,
+} from "../core/contracts";
 import type {
   ReverseStreamFactory,
   TokenGrammar,
   TokenGrammarPolicy,
 } from "./ports";
 import { ReversalFailedError } from "./errors";
-import { reverseText, type ReversalKeys, InProcessReversalHandle, isInProcessReversalHandle, safeHandleOperationId } from "./reversal";
+import {
+  reverseText,
+  type ReversalKeys,
+  InProcessReversalHandle,
+  isInProcessReversalHandle,
+  safeHandleOperationId,
+} from "./reversal";
 import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 import { safeRead } from "../core/boundary-snapshot";
 
@@ -69,7 +79,12 @@ function settledBoundary(buffer: string, policy: TokenGrammarPolicy): number {
  * Pulls `cut` back so it never lands strictly inside a delimited span (`open`...`close`).
  * An unclosed span withholds everything from its opener; a complete span is never split.
  */
-function withholdFromSpans(buffer: string, cut: number, open: string, close: string): number {
+function withholdFromSpans(
+  buffer: string,
+  cut: number,
+  open: string,
+  close: string,
+): number {
   const length = buffer.length;
   let i = 0;
   while (i < length) {
@@ -97,7 +112,10 @@ function avoidSurrogateSplit(buffer: string, cut: number): number {
     return cut;
   }
   if (cut < buffer.length) {
-    if (isHighSurrogate(buffer.charCodeAt(cut - 1)) && isLowSurrogate(buffer.charCodeAt(cut))) {
+    if (
+      isHighSurrogate(buffer.charCodeAt(cut - 1)) &&
+      isLowSurrogate(buffer.charCodeAt(cut))
+    ) {
       return cut - 1;
     }
     return cut;
@@ -110,7 +128,10 @@ function avoidSurrogateSplit(buffer: string, cut: number): number {
 }
 
 /** True when an unterminated `[[` has already grown too long to ever be a valid token. */
-function openTokenIsOverlong(buffer: string, policy: TokenGrammarPolicy): boolean {
+function openTokenIsOverlong(
+  buffer: string,
+  policy: TokenGrammarPolicy,
+): boolean {
   const open = buffer.indexOf(OPEN);
   if (open < 0) {
     return false;
@@ -170,7 +191,13 @@ class HoldbackReverseStream implements ReverseStream {
     // buffered suffix is never displayed.
     let reversed: string;
     try {
-      reversed = await reverseText(this.buffer, this.keys, this.store, this.grammar, this.policy);
+      reversed = await reverseText(
+        this.buffer,
+        this.keys,
+        this.store,
+        this.grammar,
+        this.policy,
+      );
     } catch {
       // L4: latch — no later push/end may resume or complete after a reversal failure. §7/N2: the
       // rejected error is NEVER forwarded (a raw store rejection's message/`.code` could carry PHI,
@@ -218,7 +245,13 @@ class HoldbackReverseStream implements ReverseStream {
     const settled = this.buffer.slice(0, cut);
     let reversed: string;
     try {
-      reversed = await reverseText(settled, this.keys, this.store, this.grammar, this.policy);
+      reversed = await reverseText(
+        settled,
+        this.keys,
+        this.store,
+        this.grammar,
+        this.policy,
+      );
     } catch {
       // L4: latch — a reversal failure on an emitted prefix stops the stream for good. §7/N2: the
       // rejected error is NEVER forwarded (see end()); a fresh fixed-code error is thrown instead.
@@ -278,7 +311,10 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
       // this synchronous factory. Cast preserves the branded key shape for the store lookup.
       tenantId: safeRead(input.handle, "tenantId") as ReversalKeys["tenantId"],
       matterId: safeRead(input.handle, "matterId") as ReversalKeys["matterId"],
-      dictionaryVersion: safeRead(input.handle, "dictionaryVersion") as ReversalKeys["dictionaryVersion"],
+      dictionaryVersion: safeRead(
+        input.handle,
+        "dictionaryVersion",
+      ) as ReversalKeys["dictionaryVersion"],
       // §7/N2: shape-restrict the operation id at capture (same as AtomicTokenReverser) so a hostile
       // handle cannot smuggle free-text PHI into the fixed-code ReversalFailedError.operationId this
       // stream throws on failure — a non-slug id becomes a fixed placeholder.
@@ -286,10 +322,17 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
     };
     // L6: pull the escaped-literal restore off the handle (bounded capability, never raw
     // literal data) so streamed output restores source literals just like non-stream reversal.
-    const restore =
-      isInProcessReversalHandle(input.handle)
-        ? (text: string): string => (input.handle as InProcessReversalHandle).restoreEscapedLiterals(text)
-        : IDENTITY_RESTORE;
-    return new HoldbackReverseStream(keys, input.store, input.grammar, input.policy, input.sink, restore);
+    const restore = isInProcessReversalHandle(input.handle)
+      ? (text: string): string =>
+          (input.handle as InProcessReversalHandle).restoreEscapedLiterals(text)
+      : IDENTITY_RESTORE;
+    return new HoldbackReverseStream(
+      keys,
+      input.store,
+      input.grammar,
+      input.policy,
+      input.sink,
+      restore,
+    );
   }
 }

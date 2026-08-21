@@ -8,9 +8,19 @@ describe("phase-1 deterministic variant expanders", () => {
       canonical: "Robert O'Neil",
       approvedAliases: [],
       locale: "en-US",
-      expected: ["Robert O'Neil", "O'Neil, Robert", "R. O'Neil", "Robert O'Neil's"],
+      expected: [
+        "Robert O'Neil",
+        "O'Neil, Robert",
+        "R. O'Neil",
+        "Robert O'Neil's",
+      ],
     });
-    expect(r.candidates).toEqual(["Robert O'Neil", "O'Neil, Robert", "R. O'Neil", "Robert O'Neil's"]);
+    expect(r.candidates).toEqual([
+      "Robert O'Neil",
+      "O'Neil, Robert",
+      "R. O'Neil",
+      "Robert O'Neil's",
+    ]);
     expect(r.candidates).not.toContain("Bob O'Neil");
     expect(r.candidates).not.toContain("Robert Oneil");
   });

@@ -20,7 +20,10 @@ function asStringArray(value: unknown): readonly string[] {
 
 function asNumberArray(value: unknown): readonly number[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry))
+    ? value.filter(
+        (entry): entry is number =>
+          typeof entry === "number" && Number.isFinite(entry),
+      )
     : [];
 }
 
@@ -30,7 +33,9 @@ function asNumberArray(value: unknown): readonly number[] {
  * normalized variant); structured identifiers are recovered by the engine's
  * rigid-format detectors, never guessed here.
  */
-function buildKnownValues(fixture: Readonly<Record<string, unknown>>): KnownValue[] {
+function buildKnownValues(
+  fixture: Readonly<Record<string, unknown>>,
+): KnownValue[] {
   const known: KnownValue[] = [];
 
   for (const variant of asStringArray(fixture.variants)) {
@@ -43,13 +48,21 @@ function buildKnownValues(fixture: Readonly<Record<string, unknown>>): KnownValu
 
   const surname = asString(fixture.surname);
   if (surname !== null) {
-    known.push({ literal: surname, identifierClass: "PERSON_NAME", subjectId: "subject-1" });
+    known.push({
+      literal: surname,
+      identifierClass: "PERSON_NAME",
+      subjectId: "subject-1",
+    });
   }
 
   const sameVariant = asString(fixture.sameVariant);
   if (sameVariant !== null) {
     for (const subject of asStringArray(fixture.subjects)) {
-      known.push({ literal: sameVariant, identifierClass: "PERSON_NAME", subjectId: subject });
+      known.push({
+        literal: sameVariant,
+        identifierClass: "PERSON_NAME",
+        subjectId: subject,
+      });
     }
   }
 
@@ -111,13 +124,22 @@ function runCollisionCase(
   const seeds = asNumberArray(fixture.randomOrderSeeds);
   if (seeds.length > 0) {
     const outputs = seeds.map((seed) => {
-      const result = runCollision({ originalText, locale, knownValues, shuffleSeed: seed });
+      const result = runCollision({
+        originalText,
+        locale,
+        knownValues,
+        shuffleSeed: seed,
+      });
       return result.tokenizedText ?? "";
     });
     return { ...baseObservation(), outputs, diagnostics: [caseId] };
   }
 
-  const result: CollisionResult = runCollision({ originalText, locale, knownValues });
+  const result: CollisionResult = runCollision({
+    originalText,
+    locale,
+    knownValues,
+  });
   return {
     ...baseObservation(),
     tokenizedText: result.tokenizedText,
@@ -131,7 +153,10 @@ function runCollisionCase(
 
 export function loadCollisionHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return Promise.resolve(runCollisionCase(caseId, fixture));
     },
   };

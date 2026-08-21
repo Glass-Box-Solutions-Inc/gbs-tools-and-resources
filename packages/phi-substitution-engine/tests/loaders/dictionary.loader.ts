@@ -6,9 +6,16 @@ import type {
   SchemaVersion,
   TenantId,
 } from "../../src/core/brands";
-import type { MatterAiContext, TrustedMatterAiPolicy } from "../../src/core/contracts";
+import type {
+  MatterAiContext,
+  TrustedMatterAiPolicy,
+} from "../../src/core/contracts";
 import type { CompileInput, TaggedValue } from "../../src/dictionary/contracts";
-import type { AhoCorasickCompiledDictionary, DetectorSpanInput, EgressDecision } from "../../src/dictionary/index";
+import type {
+  AhoCorasickCompiledDictionary,
+  DetectorSpanInput,
+  EgressDecision,
+} from "../../src/dictionary/index";
 import {
   InMemoryCaseTruthReader,
   InMemoryCompiledDictionaryCache,
@@ -35,7 +42,8 @@ const tenant = (s: string): TenantId => s as unknown as TenantId;
 const matter = (s: string): MatterId => s as unknown as MatterId;
 const engine = (s: string): EngineVersion => s as unknown as EngineVersion;
 const schema = (s: string): SchemaVersion => s as unknown as SchemaVersion;
-const version = (n: bigint): DictionaryVersion => n as unknown as DictionaryVersion;
+const version = (n: bigint): DictionaryVersion =>
+  n as unknown as DictionaryVersion;
 const localeBrand = (s: string): TrustedMatterAiPolicy["locale"] =>
   s as unknown as TrustedMatterAiPolicy["locale"];
 
@@ -87,7 +95,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** A trusted, schema-tagged PERSON_NAME case-truth value for one subject. */
-function personValue(subjectId: string, canonical: string, aliases: readonly string[] = []): TaggedValue {
+function personValue(
+  subjectId: string,
+  canonical: string,
+  aliases: readonly string[] = [],
+): TaggedValue {
   return {
     field: {
       schemaPath: `case.persons.${subjectId}.fullName`,
@@ -162,7 +174,7 @@ function observeDecision(decision: EgressDecision): OracleObservation {
 /** Deterministic mulberry32 shuffle, so entry-order seeds are reproducible. */
 function seededShuffle<T>(items: readonly T[], seed: number): T[] {
   const out = items.slice();
-  let state = (seed >>> 0) || 0x9e3779b9;
+  let state = seed >>> 0 || 0x9e3779b9;
   const next = (): number => {
     state = (state + 0x6d2b79f5) >>> 0;
     let t = state;
@@ -185,7 +197,10 @@ function seededShuffle<T>(items: readonly T[], seed: number): T[] {
 function percentile(values: readonly number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   if (sorted.length === 0) return 0;
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((p / 100) * sorted.length) - 1),
+  );
   return sorted[index] ?? 0;
 }
 
@@ -222,7 +237,12 @@ async function runCase(
       // The prior version is READY and cached; then a committed tagged write
       // atomically advances the active version, which is not yet READY.
       reader.set(
-        { tenantId: context.tenantId, matterId: context.matterId, dictionaryVersion: version(readyVersion), sourceTruthRevision: "rev-ready" },
+        {
+          tenantId: context.tenantId,
+          matterId: context.matterId,
+          dictionaryVersion: version(readyVersion),
+          sourceTruthRevision: "rev-ready",
+        },
         [personValue("subject-1", oldValue)],
       );
       coordinator.noteReady(context, readyVersion);
@@ -246,7 +266,10 @@ async function runCase(
       );
       const observed = observeDecision(decision);
       // The committed active version is what must be served (and is not READY).
-      return { ...observed, dictionaryVersion: observed.dictionaryVersion ?? committedVersion };
+      return {
+        ...observed,
+        dictionaryVersion: observed.dictionaryVersion ?? committedVersion,
+      };
     }
 
     // ---- L2: an old READY version cannot serve while the active version builds ----
@@ -263,7 +286,12 @@ async function runCase(
       const compiler = new MatterDictionaryCompiler(reader);
 
       reader.set(
-        { tenantId: context.tenantId, matterId: context.matterId, dictionaryVersion: version(priorVersion), sourceTruthRevision: "rev-prior" },
+        {
+          tenantId: context.tenantId,
+          matterId: context.matterId,
+          dictionaryVersion: version(priorVersion),
+          sourceTruthRevision: "rev-prior",
+        },
         [personValue("subject-1", "Maria García")],
       );
       coordinator.noteReady(context, priorVersion);
@@ -344,11 +372,21 @@ async function runCase(
       const inputA = compileInputFor("tenant-a", matterId, versionA, "rev-a");
       const inputB = compileInputFor("tenant-b", matterId, versionB, "rev-b");
       reader.set(
-        { tenantId: inputA.tenantId, matterId: inputA.matterId, dictionaryVersion: inputA.dictionaryVersion, sourceTruthRevision: "rev-a" },
+        {
+          tenantId: inputA.tenantId,
+          matterId: inputA.matterId,
+          dictionaryVersion: inputA.dictionaryVersion,
+          sourceTruthRevision: "rev-a",
+        },
         [personValue("subject-a", valueA)],
       );
       reader.set(
-        { tenantId: inputB.tenantId, matterId: inputB.matterId, dictionaryVersion: inputB.dictionaryVersion, sourceTruthRevision: "rev-b" },
+        {
+          tenantId: inputB.tenantId,
+          matterId: inputB.matterId,
+          dictionaryVersion: inputB.dictionaryVersion,
+          sourceTruthRevision: "rev-b",
+        },
         [personValue("subject-b", valueB)],
       );
 
@@ -364,7 +402,8 @@ async function runCase(
         schemaVersion: inputB.schemaVersion,
       });
       const crossTenantCacheHit =
-        preGet !== null && (preGet.tenantId as unknown as string) !== "tenant-b";
+        preGet !== null &&
+        (preGet.tenantId as unknown as string) !== "tenant-b";
 
       const compiledB = await getOrCompile(cache, compiler, inputB);
       const egressB = tokenize(compiledB, valueB, LOCALE).tokenizedText;
@@ -379,16 +418,27 @@ async function runCase(
 
     // ---- L9: a warm dictionary is reused; no recompile per call ----
     case "M-L9-RECOMPILE-PER-CALL": {
-      const identicalCalls = typeof fixture.identicalCalls === "number" ? fixture.identicalCalls : 100;
-      const payloadBytes = typeof fixture.payloadBytes === "number" ? fixture.payloadBytes : 32768;
+      const identicalCalls =
+        typeof fixture.identicalCalls === "number"
+          ? fixture.identicalCalls
+          : 100;
+      const payloadBytes =
+        typeof fixture.payloadBytes === "number" ? fixture.payloadBytes : 32768;
       const context = contextFor("tenant-1", "matter-1");
 
       const reader = new InMemoryCaseTruthReader();
       const cache = new InMemoryCompiledDictionaryCache();
-      const compiler = new CountingCompiler(new MatterDictionaryCompiler(reader));
+      const compiler = new CountingCompiler(
+        new MatterDictionaryCompiler(reader),
+      );
       const input = compileInputFor("tenant-1", "matter-1", 1n, "rev-1");
       reader.set(
-        { tenantId: context.tenantId, matterId: context.matterId, dictionaryVersion: input.dictionaryVersion, sourceTruthRevision: "rev-1" },
+        {
+          tenantId: context.tenantId,
+          matterId: context.matterId,
+          dictionaryVersion: input.dictionaryVersion,
+          sourceTruthRevision: "rev-1",
+        },
         [personValue("subject-1", "Maria García")],
       );
 
@@ -434,7 +484,8 @@ async function runCase(
       const det = isRecord(fixture.detector) ? fixture.detector : {};
       const detectorSpanRaw = Array.isArray(det.span) ? det.span : [0, 12];
       const detectorToken = asString(det.token) ?? "[[Detected_Person_1]]";
-      const detectorConfidence = typeof det.confidence === "number" ? det.confidence : 0.99;
+      const detectorConfidence =
+        typeof det.confidence === "number" ? det.confidence : 0.99;
       void dict;
 
       const reader = new InMemoryCaseTruthReader();
@@ -442,7 +493,12 @@ async function runCase(
       const compiler = new MatterDictionaryCompiler(reader);
       const input = compileInputFor("tenant-1", "matter-1", 1n, "rev-1");
       reader.set(
-        { tenantId: input.tenantId, matterId: input.matterId, dictionaryVersion: input.dictionaryVersion, sourceTruthRevision: "rev-1" },
+        {
+          tenantId: input.tenantId,
+          matterId: input.matterId,
+          dictionaryVersion: input.dictionaryVersion,
+          sourceTruthRevision: "rev-1",
+        },
         [personValue("subject-1", "Maria García")],
       );
 
@@ -467,7 +523,9 @@ async function runCase(
     // ---- L3: candidate order, cache state, and restart do not change bytes ----
     case "DETERMINISM-ENTRY-ORDER": {
       const seeds = Array.isArray(fixture.entryOrderSeeds)
-        ? fixture.entryOrderSeeds.filter((s): s is number => typeof s === "number")
+        ? fixture.entryOrderSeeds.filter(
+            (s): s is number => typeof s === "number",
+          )
         : [1, 2, 3];
       const cacheStates = Array.isArray(fixture.cacheStates)
         ? fixture.cacheStates.filter((s): s is string => typeof s === "string")
@@ -486,9 +544,18 @@ async function runCase(
         const compiler = new MatterDictionaryCompiler(reader);
         return { reader, cache, compiler };
       };
-      const seedReader = (reader: InMemoryCaseTruthReader, input: CompileInput, ordered: readonly TaggedValue[]): void => {
+      const seedReader = (
+        reader: InMemoryCaseTruthReader,
+        input: CompileInput,
+        ordered: readonly TaggedValue[],
+      ): void => {
         reader.set(
-          { tenantId: input.tenantId, matterId: input.matterId, dictionaryVersion: input.dictionaryVersion, sourceTruthRevision: input.sourceTruthRevision },
+          {
+            tenantId: input.tenantId,
+            matterId: input.matterId,
+            dictionaryVersion: input.dictionaryVersion,
+            sourceTruthRevision: input.sourceTruthRevision,
+          },
           ordered,
         );
       };
@@ -508,7 +575,11 @@ async function runCase(
             // cold and restarted both fully recompile in fresh process state.
             const deps = buildDeps();
             seedReader(deps.reader, input, shuffled);
-            const compiled = await getOrCompile(deps.cache, deps.compiler, input);
+            const compiled = await getOrCompile(
+              deps.cache,
+              deps.compiler,
+              input,
+            );
             outputs.push(tokenize(compiled, text, LOCALE).tokenizedText);
           }
         }
@@ -550,7 +621,10 @@ async function runCase(
 
       return {
         ...baseObservation(),
-        metrics: { preparedPolicyIsolation, sharedDictionaryContainsMatterValues },
+        metrics: {
+          preparedPolicyIsolation,
+          sharedDictionaryContainsMatterValues,
+        },
       };
     }
 
@@ -561,7 +635,10 @@ async function runCase(
 
 export function loadDictionaryHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return runCase(caseId, fixture);
     },
   };

@@ -117,7 +117,10 @@ export interface DetectorRedactionResult {
  */
 export interface DetectorRedactorPort {
   readonly descriptor: DetectorArtifactDescriptor;
-  detect(input: DetectorInput, signal: AbortSignal): Promise<readonly RawDetectedSpan[]>;
+  detect(
+    input: DetectorInput,
+    signal: AbortSignal,
+  ): Promise<readonly RawDetectedSpan[]>;
   /**
    * Applies only the explicit TS-assigned plan. A port may use its native span/redaction engine,
    * but may not invent replacements or return a token/value map.
@@ -134,29 +137,37 @@ export interface PreparedDetectorPolicyCompiler {
    * Compiles only the current matter/version. Implementations must not place matter values in a
    * shared dictionary and must not log or serialize the source terms outside the sidecar request.
    */
-  prepare(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    dictionaryVersion: string;
-    schemaVersion: string;
-    engineVersion: EngineVersion;
-    termsByClass: Readonly<Partial<Record<IdentifierClass, readonly string[]>>>;
-  }>): Promise<PreparedPolicyRef>;
+  prepare(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      dictionaryVersion: string;
+      schemaVersion: string;
+      engineVersion: EngineVersion;
+      termsByClass: Readonly<
+        Partial<Record<IdentifierClass, readonly string[]>>
+      >;
+    }>,
+  ): Promise<PreparedPolicyRef>;
   evict(ref: PreparedPolicyRef): Promise<void>;
 }
 
 export interface DetectorDeadlineRunner {
   /** Primary and fallback share one deadline; fallback must be independently eligible. */
-  detectWithin(input: Readonly<{
-    primary: DetectorRedactorPort;
-    fallback: DetectorRedactorPort | null;
-    request: DetectorInput;
-    deadlineMs: number;
-    normalizer: DetectorSpanNormalizer;
-  }>): Promise<Readonly<{
-    descriptor: DetectorArtifactDescriptor;
-    spans: readonly DetectedSpan[];
-  }>>;
+  detectWithin(
+    input: Readonly<{
+      primary: DetectorRedactorPort;
+      fallback: DetectorRedactorPort | null;
+      request: DetectorInput;
+      deadlineMs: number;
+      normalizer: DetectorSpanNormalizer;
+    }>,
+  ): Promise<
+    Readonly<{
+      descriptor: DetectorArtifactDescriptor;
+      spans: readonly DetectedSpan[];
+    }>
+  >;
 }
 
 export interface DetectorOnlyTokenAllocator {
@@ -164,12 +175,14 @@ export interface DetectorOnlyTokenAllocator {
    * Creates stable tokens only for this operation and stores raw values encrypted for at most
    * 24 hours. It never promotes a detected value into permanent matter aliases automatically.
    */
-  allocate(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    operationId: OperationId;
-    attemptId: OperationAttemptId;
-    originalText: string;
-    spans: readonly DetectedSpan[];
-  }>): Promise<readonly RedactionInstruction[]>;
+  allocate(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      operationId: OperationId;
+      attemptId: OperationAttemptId;
+      originalText: string;
+      spans: readonly DetectedSpan[];
+    }>,
+  ): Promise<readonly RedactionInstruction[]>;
 }

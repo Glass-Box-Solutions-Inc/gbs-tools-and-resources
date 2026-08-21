@@ -13,7 +13,9 @@ export interface ReclaimOutcome {
 }
 
 export interface SpoolMaintenance {
-  reclaimOrphanedPrepared(input: ReclaimOrphanedPreparedInput): Promise<ReclaimOutcome>;
+  reclaimOrphanedPrepared(
+    input: ReclaimOrphanedPreparedInput,
+  ): Promise<ReclaimOutcome>;
 }
 
 export interface ScrubbedReclaimOrphanedPreparedInput {
@@ -37,14 +39,21 @@ export function scrubReclaimOrphanedPreparedInput(
   if (!Number.isSafeInteger(limitCap) || limitCap <= 0) {
     throw new Error("invalid_reclaim_limit_cap");
   }
-  if (!Number.isFinite(snapshot.olderThanEpochMs) ||
-      !Number.isSafeInteger(snapshot.olderThanEpochMs) ||
-      snapshot.olderThanEpochMs < 0) {
+  if (
+    !Number.isFinite(snapshot.olderThanEpochMs) ||
+    !Number.isSafeInteger(snapshot.olderThanEpochMs) ||
+    snapshot.olderThanEpochMs < 0
+  ) {
     throw new Error("invalid_reclaim_older_than");
   }
 
   const limit = snapshot.limit ?? limitCap;
-  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit <= 0 || limit > limitCap) {
+  if (
+    !Number.isFinite(limit) ||
+    !Number.isSafeInteger(limit) ||
+    limit <= 0 ||
+    limit > limitCap
+  ) {
     throw new Error("invalid_reclaim_limit");
   }
 

@@ -24,14 +24,19 @@ export function verifyDetectorArtifact(
   const mismatches: string[] = [];
   if (evaluated.engine !== deployed.engine) mismatches.push("engine");
   if (evaluated.model !== deployed.model) mismatches.push("model");
-  if (evaluated.recognizers !== deployed.recognizers) mismatches.push("recognizers");
-  if (evaluated.configDigest !== deployed.configDigest) mismatches.push("configDigest");
+  if (evaluated.recognizers !== deployed.recognizers)
+    mismatches.push("recognizers");
+  if (evaluated.configDigest !== deployed.configDigest)
+    mismatches.push("configDigest");
 
   if (mismatches.length === 0) {
     return { buildPassed: true, diagnostics: [] };
   }
   return {
     buildPassed: false,
-    diagnostics: ["DETECTOR_ARTIFACT_MISMATCH", ...mismatches.map((field) => `mismatch:${field}`)],
+    diagnostics: [
+      "DETECTOR_ARTIFACT_MISMATCH",
+      ...mismatches.map((field) => `mismatch:${field}`),
+    ],
   };
 }

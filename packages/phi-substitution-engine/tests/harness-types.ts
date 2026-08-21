@@ -29,7 +29,11 @@ export interface OracleObservation {
     ciphertextBytes: number;
     decrypted: unknown;
   }>[];
-  readonly drain: Readonly<{ delivered: number; duplicates: number; remaining: number }>;
+  readonly drain: Readonly<{
+    delivered: number;
+    duplicates: number;
+    remaining: number;
+  }>;
   readonly buildPassed: boolean;
   readonly diagnostics: readonly string[];
   readonly outputs: readonly string[];
@@ -37,7 +41,10 @@ export interface OracleObservation {
 }
 
 export interface ModuleHarness {
-  run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation>;
+  run(
+    caseId: string,
+    fixture: Readonly<Record<string, unknown>>,
+  ): Promise<OracleObservation>;
 }
 
 export function implementationRequired(moduleName: string): never {

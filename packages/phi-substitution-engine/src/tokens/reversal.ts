@@ -8,10 +8,27 @@ import type {
   TenantId,
   TokenizedText,
 } from "../core/brands";
-import type { ReversalHandle, ReversalRecordInput, ReversalStore, ReversalWriteStore } from "../core/contracts";
-import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
-import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
-import { restoreSentinelLiterals, SENTINEL_CLOSE, SENTINEL_OPEN } from "./escaper";
+import type {
+  ReversalHandle,
+  ReversalRecordInput,
+  ReversalStore,
+  ReversalWriteStore,
+} from "../core/contracts";
+import type {
+  EscapedTokenLiteral,
+  TokenGrammar,
+  TokenGrammarPolicy,
+  TokenReverser,
+} from "./ports";
+import {
+  ReversalFailedError,
+  ReversalHandleNotSerializableError,
+} from "./errors";
+import {
+  restoreSentinelLiterals,
+  SENTINEL_CLOSE,
+  SENTINEL_OPEN,
+} from "./escaper";
 
 const SEP = String.fromCharCode(0);
 
@@ -150,7 +167,12 @@ export class InMemoryReversalStore implements ReversalWriteStore {
    * holds a duplicate mapping — one canonical per tenant+matter+version+token.
    */
   record(input: InMemoryReversalRecordInput): void {
-    const key = this.#key(input.tenantId, input.matterId, input.dictionaryVersion, input.token);
+    const key = this.#key(
+      input.tenantId,
+      input.matterId,
+      input.dictionaryVersion,
+      input.token,
+    );
     if (input.attemptId !== undefined) {
       const attemptKey = `${key}${SEP}${input.attemptId}`;
       if (this.#recordedAttempts.has(attemptKey)) {
@@ -181,7 +203,12 @@ export class InMemoryReversalStore implements ReversalWriteStore {
       }
       seen.add(token);
       const canonical = this.#canonicalByKey.get(
-        this.#key(input.tenantId, input.matterId, input.dictionaryVersion, token),
+        this.#key(
+          input.tenantId,
+          input.matterId,
+          input.dictionaryVersion,
+          token,
+        ),
       );
       if (canonical !== undefined) {
         resolved.set(token, canonical);
@@ -299,7 +326,9 @@ export async function reverseText(
  * `Symbol.hasInstance` trap could throw a PHI canary during the prototype-chain walk. An
  * unclassifiable handle is simply treated as not-in-process (identity restore), never a throw.
  */
-export function isInProcessReversalHandle(value: unknown): value is InProcessReversalHandle {
+export function isInProcessReversalHandle(
+  value: unknown,
+): value is InProcessReversalHandle {
   try {
     return value instanceof InProcessReversalHandle;
   } catch {
@@ -338,7 +367,10 @@ export class AtomicTokenReverser implements TokenReverser {
     private readonly policy: TokenGrammarPolicy,
   ) {}
 
-  async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
+  async reverse(
+    text: TokenizedText,
+    handle: ReversalHandle,
+  ): Promise<DisplayText> {
     // §7/N2: read the operation id ONCE, getter-throw-safe — every fixed-code failure below carries
     // only this id, so a handle whose `operationId` getter throws (or changes between reads) can't
     // turn a fixed-code failure back into a raw PHI throw.

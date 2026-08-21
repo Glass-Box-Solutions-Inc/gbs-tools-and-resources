@@ -5,7 +5,10 @@ import type { DictionaryMatchCandidate } from "../dictionary/contracts";
 export interface OriginalOffsetMap {
   readonly normalized: string;
   /** Returns null unless the normalized span maps exactly to valid original UTF-16 boundaries. */
-  toOriginalSpan(startNormalized: number, endNormalized: number): Readonly<{
+  toOriginalSpan(
+    startNormalized: number,
+    endNormalized: number,
+  ): Readonly<{
     startUtf16: Utf16Offset;
     endUtf16: Utf16Offset;
   }> | null;
@@ -32,9 +35,15 @@ export interface ValidatedCitationSpan {
 
 export interface CitationRule {
   /** Requires adversarial party form, v./vs., reporter or tribunal marker, and citation/year structure. */
-  validatedSpans(originalText: string, locale: string): readonly ValidatedCitationSpan[];
+  validatedSpans(
+    originalText: string,
+    locale: string,
+  ): readonly ValidatedCitationSpan[];
   /** True only for a PERSON_NAME surname candidate wholly inside a validated span. */
-  suppresses(candidate: DictionaryMatchCandidate, spans: readonly ValidatedCitationSpan[]): boolean;
+  suppresses(
+    candidate: DictionaryMatchCandidate,
+    spans: readonly ValidatedCitationSpan[],
+  ): boolean;
 }
 
 export interface DetectorCollisionSpan {
@@ -62,10 +71,12 @@ export interface CollisionResolver {
    * Applies C1–C8 in fixed order. Selection is leftmost-longest, specificity, then explicit
    * class precedence; dictionary spans always beat overlapping detector spans.
    */
-  resolve(input: Readonly<{
-    originalText: string;
-    locale: string;
-    dictionaryCandidates: readonly DictionaryMatchCandidate[];
-    detectorCandidates: readonly DetectorCollisionSpan[];
-  }>): ResolvedCollisionSet;
+  resolve(
+    input: Readonly<{
+      originalText: string;
+      locale: string;
+      dictionaryCandidates: readonly DictionaryMatchCandidate[];
+      detectorCandidates: readonly DetectorCollisionSpan[];
+    }>,
+  ): ResolvedCollisionSet;
 }

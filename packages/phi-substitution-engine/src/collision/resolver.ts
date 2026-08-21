@@ -24,7 +24,6 @@ import type {
 } from "./ports";
 import type { Utf16Offset } from "../core/brands";
 
-const asUtf16 = (value: number): Utf16Offset => value as unknown as Utf16Offset;
 const num = (value: Utf16Offset): number => value as unknown as number;
 
 /** Lower rank wins an otherwise-tied overlap (C4/class precedence). */
@@ -90,7 +89,10 @@ export class Phase1CollisionResolver implements CollisionResolver {
     }>,
   ): ResolvedCollisionSet {
     const { originalText, locale } = input;
-    const citationSpans = this.citationRule.validatedSpans(originalText, locale);
+    const citationSpans = this.citationRule.validatedSpans(
+      originalText,
+      locale,
+    );
 
     // C1 -> C2 -> C3 in fixed order over dictionary candidates.
     const survivingDictionary = input.dictionaryCandidates.filter(
@@ -125,7 +127,10 @@ export class Phase1CollisionResolver implements CollisionResolver {
       const end = num(span.endUtf16);
       // C3 also governs detector-only spans, but only a PERSON_NAME is ever
       // suppressed inside a validated citation; a structured identifier is not.
-      if (span.identifierClass === "PERSON_NAME" && insideCitation(start, end, citationSpans)) {
+      if (
+        span.identifierClass === "PERSON_NAME" &&
+        insideCitation(start, end, citationSpans)
+      ) {
         continue;
       }
       intervals.push({

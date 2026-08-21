@@ -18,7 +18,9 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
         { id: "witness-2", value: "Maria Garcia", role: "Witness" },
       ],
     });
-    expect(r.tokensBySubject["claimant-1"]).not.toBe(r.tokensBySubject["witness-2"]);
+    expect(r.tokensBySubject["claimant-1"]).not.toBe(
+      r.tokensBySubject["witness-2"],
+    );
   });
 
   it("SEC-C7-01 / M-C7-NO-RESERVED-TOKEN-ESCAPE: source token injection cannot reveal a mapping", async () => {
@@ -46,7 +48,10 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
       matterMapSize: 100,
     });
     expect(r.reversalLookupCount).toBe(1);
-    expect(r.reversalLookupTokens).toEqual(["[[Claimant]]", "[[Treating_Physician]]"]);
+    expect(r.reversalLookupTokens).toEqual([
+      "[[Claimant]]",
+      "[[Treating_Physician]]",
+    ]);
     expect(r.reversalLookupTokens).toHaveLength(2);
   });
 
@@ -73,7 +78,9 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
       exhaustiveUtf16Partitions: true,
       canonical: "Maria García",
     });
-    expect(new Set(r.outputs)).toEqual(new Set(["Before Maria García after 😀"]));
+    expect(new Set(r.outputs)).toEqual(
+      new Set(["Before Maria García after 😀"]),
+    );
     expect(r.displayChunks.join("")).toBe("Before Maria García after 😀");
   });
 
@@ -108,10 +115,13 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
   // ---- GLY-335 Wave 0 seam-freeze: the ReversalWriteStore PORT CONTRACT (roadmap defect A#3) ----
 
   it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: a divergent same-attempt replay is a no-op (keeps first canonical); a new attempt may update", async () => {
-    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-RECORD-IDEMPOTENT", {
-      canonical: "Maria García",
-      attemptId: "att-replay-1",
-    });
+    const r = await loadTokensHarness().run(
+      "M-GLY335-REVERSAL-RECORD-IDEMPOTENT",
+      {
+        canonical: "Maria García",
+        attemptId: "att-replay-1",
+      },
+    );
     // Exactly one mapping, and a DIVERGENT replay under the same attemptId did NOT overwrite it —
     // the first canonical stands (proves the port's "replay is a no-op" promise, not map dedup).
     expect(r.metrics.distinctMappings).toBe(1);
@@ -123,7 +133,10 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
   });
 
   it("SEC-GLY335-02 / M-GLY335-REVERSAL-BOUNDED-RESOLVE: resolve is encounter-bounded, over-limit is rejected", async () => {
-    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-BOUNDED-RESOLVE", {});
+    const r = await loadTokensHarness().run(
+      "M-GLY335-REVERSAL-BOUNDED-RESOLVE",
+      {},
+    );
     expect(typeof r.metrics.batchLimit).toBe("number");
     expect(r.metrics.batchLimit as number).toBeGreaterThan(0);
     // A request larger than the encounter bound is rejected — no caller can pull the whole map.
@@ -134,7 +147,10 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
   });
 
   it("SEC-GLY335-03 / M-GLY335-REVERSAL-NO-LIST-ALL: write port exposes no enumerate-all API (§7/N2)", async () => {
-    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-NO-LIST-ALL", {});
+    const r = await loadTokensHarness().run(
+      "M-GLY335-REVERSAL-NO-LIST-ALL",
+      {},
+    );
     expect(r.metrics.listAllApisPresent).toBe(0);
     expect(r.diagnostics).toEqual([]);
     // The only surfaces are the bounded resolve (read) and record (write).
