@@ -506,6 +506,124 @@ describe("GLY-373 namespaced grammar", () => {
     // machinery and must never reach a reader.
     expect(reversed).not.toContain(SENTINEL_OPEN);
     expect(reversed).not.toContain(SENTINEL_CLOSE);
+
+    // (e) HOSTILE INTERNAL FORMATTER (MUT-13). Spec §5 mutant row GLY373-MUT-13-VALIDATION-BYPASS
+    //     requires THIS oracle to carry the row: the malformed value must originate INSIDE the
+    //     engine — a test-double `TokenGrammar` whose `format` returns a hostile SUCCESS value
+    //     while `parse` behaves normally. Injecting at the parser would test the parser, not the
+    //     re-parse-and-namespace-equality guard on the locally formatted detector token.
+    //     Rows (a)-(c) above feed hostile values to `reverse()`, which never reaches that guard;
+    //     `substitute()` is the only path that does. Contract per the mutant row: the request
+    //     fixed-fails `DICTIONARY_UNAVAILABLE`, returns NO output, records NO reversal row, and no
+    //     canary reaches output. The namespace-equality half is asserted by the wrong-namespace row
+    //     — a grammar-VALID token that `kind === "valid"` alone would wave through (§3.2.3).
+    const PHI_CANARY = "GLY373-PHI-CANARY 123-45-6789";
+    const realGrammar = new BracketTokenGrammar();
+    const hostileFormatterRows: readonly (readonly [
+      string,
+      unknown,
+      string,
+    ])[] = [
+      // grammar-INVALID string (the spec's own literal): bad namespace, so `parse` is malformed.
+      [
+        "a grammar-invalid namespaced string",
+        "[[D~ZZZZ~SSN_2]]",
+        "[[D~ZZZZ~SSN_2]]",
+      ],
+      // raw PHI carried as the token itself — would be spliced into segments[].text (sink a).
+      ["a raw-PHI string", PHI_CANARY, PHI_CANARY],
+      // grammar-VALID, WRONG namespace: killed by the namespace-equality half of the guard alone.
+      [
+        "a grammar-valid token in a DIFFERENT namespace",
+        `[[D~00000000000000ff~SSN_2]]`,
+        `[[D~00000000000000ff~SSN_2]]`,
+      ],
+      // non-string carrier whose coercion throws raw PHI (sink c): the guard must reject it
+      // BEFORE any `String(token)` coercion, so the canary never escapes as a message.
+      [
+        "a non-string carrier whose coercion throws",
+        {
+          toString: () => {
+            throw new Error(PHI_CANARY);
+          },
+        },
+        "[[SSN_2]]",
+      ],
+    ];
+    for (const [why, forged, probe] of hostileFormatterRows) {
+      const hostileGrammar = {
+        parse: (candidate: string, p: TokenGrammarPolicy) =>
+          realGrammar.parse(candidate, p),
+        scan: (text: string, p: TokenGrammarPolicy) =>
+          realGrammar.scan(text, p),
+        format: () => forged,
+      };
+      const store = new InMemoryReversalStore();
+      // Constructed DIRECTLY for the same reason as the OR-04 regression above: the dev factory
+      // exposes no `grammar` option, so a hostile grammar passed through it is silently ignored
+      // and the row would be VACUOUS.
+      const engine = new ComposedSubstitutionEngine(
+        branded({
+          coordinator: { requireActiveReady: async () => 1n },
+          truthReader: { readTaggedValues: async () => [] },
+          sourceTruthRevision: "rev-1",
+          reversalStore: store,
+          engineVersion: "engine-1",
+          grammar: hostileGrammar,
+        }),
+      );
+      let caught: unknown;
+      let output: unknown;
+      try {
+        output = await engine.substitute(
+          branded({
+            context: {
+              tenantId: "t-mut13",
+              matterId: "m-mut13",
+              actorId: "a-mut13",
+              operationId: "op-mut13",
+              attemptId: "att-mut13",
+            },
+            policy: {
+              mode: "REQUIRED",
+              locale: "en-US",
+              activeDictionaryVersion: 1n,
+              schemaVersion: "schema-1",
+              detectorRequirement: "DETERMINISTIC_STRUCTURED_ONLY",
+              approvedOffDecisionId: null,
+            },
+            segments: segments("SSN 123-45-6789."),
+            purpose: "generation",
+          }),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      // Fixed-fails with the fixed code, and NOTHING is returned.
+      expect(output, why).toBeUndefined();
+      expect(isPhiEngineError(caught), why).toBe(true);
+      expect((caught as { code?: string } | undefined)?.code, why).toBe(
+        "DICTIONARY_UNAVAILABLE",
+      );
+      // No canary anywhere in the surfaced failure — message, code, or safe details.
+      expect(
+        JSON.stringify({
+          code: (caught as { code?: string } | undefined)?.code,
+          message: String((caught as { message?: unknown })?.message ?? ""),
+          details: (caught as { safeDetails?: unknown } | undefined)
+            ?.safeDetails,
+        }),
+        why,
+      ).not.toContain("GLY373-PHI-CANARY");
+      // And the forged token never became a reversible mapping.
+      const map = await store.resolveEncounteredTokens({
+        tenantId: branded("t-mut13"),
+        matterId: branded("m-mut13"),
+        dictionaryVersion: branded(1n),
+        tokens: [branded<SubstitutionToken>(probe)],
+      });
+      expect(map.size, why).toBe(0);
+    }
   });
 
   // =========================================================================================
