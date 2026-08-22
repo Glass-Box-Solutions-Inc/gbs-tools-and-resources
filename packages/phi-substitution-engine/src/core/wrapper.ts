@@ -73,6 +73,7 @@ import {
   safeString,
   intrinsicCopy,
 } from "./boundary-snapshot";
+import { REVERSAL_CANONICAL_CONFLICT_DETAIL } from "../tokens/conflict-sentinel";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -279,7 +280,7 @@ function errorFailureDetail(error: unknown): string | null {
       return null;
     }
     const conflict = (details as { conflict?: unknown }).conflict;
-    return conflict === "reversal-key-canonical-mismatch" ? conflict : null;
+    return conflict === REVERSAL_CANONICAL_CONFLICT_DETAIL ? conflict : null;
   } catch {
     return null;
   }

@@ -116,6 +116,53 @@ function isNamespaceLabel(value: string): boolean {
   return true;
 }
 
+/**
+ * GLY-373 CAND-1: split `text` on the `/^(.+)_(\d+)$/` production WITHOUT a RegExp.
+ *
+ * `text` is the inner text of a `[[...]]` span taken from UNTRUSTED model/provider output and may
+ * carry PHI. `RegExp.prototype.exec` parks the ENTIRE subject string in the legacy global statics
+ * (`RegExp.input`, `RegExp.$_`, `RegExp.lastMatch`, ...), where any in-process actor — including
+ * every injected port the threat model declares UNTRUSTED — can read it afterwards. That is the
+ * same channel `errors.ts` documents and OR-GLY373-14(h) allow-list B bans for
+ * `RegExp.prototype.test`; this is the same hand-rolled-scan idiom as `isNamespaceLabel` above.
+ *
+ * Behaviour is IDENTICAL to `/^(.+)_(\d+)$/`, including the parts that are easy to get wrong:
+ * - `(.+)` is GREEDY, so the split is at the LAST `_` whose entire suffix is digits — which is
+ *   exactly the character before the maximal trailing digit run;
+ * - `\d` (no `u`/unicode-class flag) is ASCII `0`-`9` only, so `٢` (Arabic-Indic) never matches;
+ * - `.` does not match a line terminator, and every character of `text` must be consumed by
+ *   `.`, `_`, or `\d`, so a `text` containing `\n`, `\r`, `U+2028`, or `U+2029` cannot match at
+ *   all — hence the whole-string line-terminator rejection below;
+ * - the role (`.+`) and the digit run (`\d+`) are each one-or-more, so both must be non-empty.
+ *
+ * Returns `null` where the RegExp would not match.
+ */
+function splitRoleAndDigits(text: string): readonly [string, string] | null {
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i] as string;
+    if (c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029") {
+      return null; // `.` cannot match a line terminator → the whole production fails
+    }
+  }
+  // Start of the maximal trailing run of ASCII digits.
+  let digitsStart = text.length;
+  while (digitsStart > 0) {
+    const c = text[digitsStart - 1] as string;
+    if (c < "0" || c > "9") {
+      break;
+    }
+    digitsStart -= 1;
+  }
+  if (digitsStart === text.length) {
+    return null; // `\d+` needs at least one digit
+  }
+  const underscore = digitsStart - 1;
+  if (underscore < 1 || text[underscore] !== "_") {
+    return null; // no `_` separator, or an empty `(.+)` role
+  }
+  return [text.slice(0, underscore), text.slice(digitsStart)];
+}
+
 /** The inner-text prefix a namespace contributes: `""` for AUTHORITY, `D~<ns>~` for DETECTOR. */
 function namespacePrefix(namespace: string | null): string {
   return namespace === null
@@ -148,10 +195,10 @@ function classifyRoleAndSequence(
   }
 
   // Trailing `_<digits>` with an allow-listed role prefix → sequenced token.
-  const match = /^(.+)_(\d+)$/.exec(text);
+  const match = splitRoleAndDigits(text);
   if (match) {
-    const role = match[1] as string;
-    const digits = match[2] as string;
+    const role = match[0];
+    const digits = match[1];
     if (role.length <= policy.maximumRoleUtf16Length && roles.has(role)) {
       if (digits.length > 1 && digits.startsWith("0")) {
         return { kind: "malformed", reason: "BAD_SEQUENCE" };

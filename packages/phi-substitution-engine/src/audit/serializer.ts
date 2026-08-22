@@ -9,6 +9,7 @@ import type {
 import { IDENTIFIER_CLASSES } from "./counts";
 import { PhiAuditError } from "./errors";
 import { safeOwnKeys } from "../core/boundary-snapshot";
+import { REVERSAL_CANONICAL_CONFLICT_DETAIL } from "../tokens/conflict-sentinel";
 
 const AI_OPERATIONS: readonly AiOperation[] = [
   "generation",
@@ -61,7 +62,7 @@ const TERMINAL_FAILURE_CODES: readonly string[] = [
  * There is exactly one member today: the reversal-key canonical-mismatch discriminator.
  */
 const TERMINAL_FAILURE_DETAILS: readonly string[] = [
-  "reversal-key-canonical-mismatch",
+  REVERSAL_CANONICAL_CONFLICT_DETAIL,
 ];
 
 /** A single field's expected shape. The allow-list is exact and recursive. */
