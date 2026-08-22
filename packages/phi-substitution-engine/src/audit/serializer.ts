@@ -9,6 +9,7 @@ import type {
 import { IDENTIFIER_CLASSES } from "./counts";
 import { PhiAuditError } from "./errors";
 import { safeOwnKeys } from "../core/boundary-snapshot";
+import { REVERSAL_CANONICAL_CONFLICT_DETAIL } from "../tokens/conflict-sentinel";
 
 const AI_OPERATIONS: readonly AiOperation[] = [
   "generation",
@@ -54,6 +55,16 @@ const TERMINAL_FAILURE_CODES: readonly string[] = [
   "PROVIDER_INVOCATION_FAILED",
 ];
 
+/**
+ * GLY-373 §3.2.5: the ONLY non-null strings a terminal `failureDetail` may carry. Same reasoning
+ * as `TERMINAL_FAILURE_CODES` above — this is the last gate before persistence, so an exact value
+ * allow-list is what keeps an arbitrary (possibly PHI-laden) string out of the durable record.
+ * There is exactly one member today: the reversal-key canonical-mismatch discriminator.
+ */
+const TERMINAL_FAILURE_DETAILS: readonly string[] = [
+  REVERSAL_CANONICAL_CONFLICT_DETAIL,
+];
+
 /** A single field's expected shape. The allow-list is exact and recursive. */
 type FieldSpec =
   | { readonly kind: "literal"; readonly value: string }
@@ -96,6 +107,7 @@ const EVENT_SCHEMA: ObjectSchema = {
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
   outcome: { kind: "enum", values: AUDIT_OUTCOMES },
   failureCode: { kind: "enumOrNull", values: TERMINAL_FAILURE_CODES },
+  failureDetail: { kind: "enumOrNull", values: TERMINAL_FAILURE_DETAILS },
   occurredAt: { kind: "timestamp" },
 };
 

@@ -73,6 +73,7 @@ import {
   safeString,
   intrinsicCopy,
 } from "./boundary-snapshot";
+import { REVERSAL_CANONICAL_CONFLICT_DETAIL } from "../tokens/conflict-sentinel";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -256,6 +257,33 @@ function errorCodeString(error: unknown): string {
     isPhiEngineFailureCode(code)
     ? code
     : "FAILED_CLOSED";
+}
+
+/**
+ * GLY-373 §3.2.5 — projects the engine's fixed `safeDetails.conflict` discriminator into the
+ * durable audit record, so a reversal-key canonical conflict is distinguishable from dictionary
+ * ambiguity long after the call (both surface as `AMBIGUOUS_KNOWN_IDENTIFIER`, and the ruling
+ * forbids widening the published failure-code union).
+ *
+ * §7/N2 discipline is unchanged: the value is read ONCE behind a getter-throw guard and is
+ * returned ONLY when it is EXACTLY the one fixed literal. Anything else — a hostile string, a
+ * non-string, a throwing getter — yields `null`, so nothing PHI-laden can reach the record. The
+ * serializer's `TERMINAL_FAILURE_DETAILS` allow-list is a second, independent gate.
+ */
+function errorFailureDetail(error: unknown): string | null {
+  try {
+    if (error === null || typeof error !== "object") {
+      return null;
+    }
+    const details = (error as { safeDetails?: unknown }).safeDetails;
+    if (details === null || typeof details !== "object") {
+      return null;
+    }
+    const conflict = (details as { conflict?: unknown }).conflict;
+    return conflict === REVERSAL_CANONICAL_CONFLICT_DETAIL ? conflict : null;
+  } catch {
+    return null;
+  }
 }
 
 export class ComposedProtectedAiProvider<
@@ -1536,6 +1564,10 @@ export class ComposedProtectedAiProvider<
       context,
       purpose,
       errorCodeString(error),
+      // GLY-373 §3.2.5: a reversal-key canonical conflict fails during `substitute()`, i.e. on this
+      // PRE-EGRESS path, so this is where the triage discriminator has to be threaded for it to
+      // reach the durable record at all. `null` on every other failure.
+      errorFailureDetail(error),
     );
   }
 
@@ -1544,11 +1576,18 @@ export class ComposedProtectedAiProvider<
     context: MatterAiContext,
     purpose: AiOperation,
     failureCode: string,
+    failureDetail: string | null = null,
   ): Promise<void> {
     const record = this.#minimalPreparedRecord(context, purpose);
     try {
       const receipt = await this.#deps.audit.prepare(record);
-      await this.#finalizeAt(receipt, record, "failed_closed", failureCode);
+      await this.#finalizeAt(
+        receipt,
+        record,
+        "failed_closed",
+        failureCode,
+        failureDetail,
+      );
     } catch {
       // Durability unavailable (or terminal already exists): the fail-closed outcome is
       // still surfaced via the thrown original error, and nothing egressed.
@@ -1618,12 +1657,15 @@ export class ComposedProtectedAiProvider<
     record: PhiAuditPreparedRecord,
     outcome: PhiAuditOutcome,
     failureCode: string | null,
+    /** GLY-373 §3.2.5 triage discriminator; `null` on every path that does not carry one. */
+    failureDetail: string | null = null,
   ): Promise<void> {
     const event: PhiAuditEvent = preparedToTerminalEvent(
       record,
       outcome,
       failureCode,
       this.#safeNow(),
+      failureDetail,
     );
     await this.#deps.audit.finalize(receipt, event);
   }

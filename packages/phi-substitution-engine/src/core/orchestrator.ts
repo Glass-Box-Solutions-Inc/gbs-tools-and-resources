@@ -27,14 +27,29 @@
  * subject in a reserved namespace that can never collide with a real subject id,
  * so a real subject and a synthetic detector span never share a reversal key.
  *
- * The phase-1 detector belt (`../detectors`) is DISABLED and is never called for
- * a customer claim. A policy that nonetheless REQUIRES the belt fails closed (N4).
+ * TWO DIFFERENT THINGS ARE BOTH CALLED "THE DETECTOR" (GLY-373 §1 fact 3 — the previous
+ * wording here was true of the belt and was read as covering both, which is how F-J1 hid):
+ *   - the phase-1 detector BELT (`../detectors`) is the pluggable ML/service detector. It is
+ *     DISABLED and is never called for a customer claim; a policy that REQUIRES it fails closed
+ *     (N4). `detectorRequirement === "REQUIRED"` is the only value that reaches that fail.
+ *   - the DETERMINISTIC STRUCTURED-IDENTIFIER detector (`../collision/detectors.ts`) is a
+ *     separate, in-engine regex pass. At 0.2.0 it was UNCONDITIONAL. GLY-373 §4.2 makes it
+ *     policy-governed and exhaustively fail-closed: it RUNS under
+ *     `"DETERMINISTIC_STRUCTURED_ONLY"` and its deprecated alias `"DISABLED_PHASE_1"`, is NOT
+ *     INVOKED AT ALL under `"STRUCTURED_DETECTION_OFF"` (suppression is non-invocation, never
+ *     filtering — MUT-06), and any unrecognised value fails closed with `MISSING_TRUSTED_POLICY`
+ *     before any dictionary work (MUT-07).
+ *
+ * Detector-only spans are substituted with NAMESPACED tokens (`[[D~<16 hex>~Role_N]]`, GLY-373
+ * §3.1) in BOTH injected and default mode. The namespace makes a detector token structurally
+ * incapable of equalling an authority token under the operation-blind reversal key, which is what
+ * the 0.2.0 injected-mode fixed-fail existed to protect; that fixed-fail is therefore deleted and
+ * replaced by this path, never merely removed (MUT-05).
  */
 import type {
   DictionaryVersion,
   DisplayText,
   EngineVersion,
-  SubjectId,
   SubstitutionToken,
   TokenizedText,
   TokenRole,
@@ -89,7 +104,18 @@ import {
   reverseText,
 } from "../tokens/index";
 import { toTotalIdentifierCounts } from "../audit/index";
-import { PhiEngineError, safeCodeString } from "./errors";
+import {
+  PhiEngineError,
+  safeCodeString,
+  isPhiEngineError,
+  assertTrustedContextIdShape,
+  missingTrustedContextError,
+} from "./errors";
+import { deriveDetectorNamespace } from "../tokens/namespace";
+import {
+  REVERSAL_CANONICAL_CONFLICT,
+  REVERSAL_CANONICAL_CONFLICT_DETAIL,
+} from "../tokens/conflict-sentinel";
 import { safeRead, safeString, intrinsicCopy } from "./boundary-snapshot";
 
 /** Token role → identifier class, used to tally per-class counts from tokenized output. */
@@ -135,8 +161,17 @@ const CLASS_ROLE: Readonly<Record<IdentifierClass, string>> = {
  * subject ids come from tagged case truth and are never NUL-prefixed, so a synthetic
  * subject can never share an assignment key with a real one — even a real id that
  * happens to look like the old `det:op:ordinal` shape.
+ *
+ * GLY-373 §3.2.3 (ordinal source) REMOVED ITS LAST USE, and that is strictly stronger than the
+ * fence it provided: detector ordinals now come from the per-operation counter and detector tokens
+ * are formatted locally through `grammar.format(role, seq, policy, ns)`, so
+ * `getOrAllocate`/`retire` are NEVER called for a synthetic subject on ANY store, injected or not
+ * (GLY-372 §4.4 and OR-GLY372-09 remain literally true; OR-GLY373-04 asserts both counts are zero,
+ * and MUT-11 restores the old allocation and must go RED). It is RETAINED as the record of that
+ * fence — subject ids are deliberately out of scope for the §3.2.2 NUL check precisely because
+ * this prefix is itself NUL-bearing by design (OR-GLY373-11(e)).
  */
-const SYNTHETIC_DETECTOR_PREFIX = "\u0000detector\u0000";
+export const SYNTHETIC_DETECTOR_PREFIX = "\u0000detector\u0000";
 
 const role = (value: string): TokenRole => value as unknown as TokenRole;
 
@@ -280,6 +315,16 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     ) {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
+    // GLY-373 §3.2.2 — ENTRY POINT 1 of 3. Reject NUL-bearing and ill-formed-UTF-16 routing ids
+    // BEFORE the namespace derivation, the readiness gate, and any reversal write, on the
+    // ALREADY-SNAPSHOTTED locals above (never by re-reading the request — that is the TOCTOU hole
+    // MUT-30/MUT-31 exploit). Ordering is the whole guarantee: a late check still leaks the
+    // derivation (MUT-23). This is the first code that actually establishes the injectivity the
+    // NUL joins in `tokens/durable/keys.ts` and `tokens/reversal.ts` have always merely asserted.
+    assertTrustedContextIdShape("tenantId", tenantId);
+    assertTrustedContextIdShape("matterId", matterId);
+    assertTrustedContextIdShape("operationId", operationId);
+    assertTrustedContextIdShape("attemptId", attemptId);
     return {
       tenantId: tenantId as unknown as TenantId,
       matterId: matterId as unknown as MatterId,
@@ -339,6 +384,32 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         {},
       );
     }
+    // GLY-373 §4.2 — EXHAUSTIVE AND FAIL-CLOSED, validated at the same point the value is read
+    // (§4.2(5): read exactly once, getter-throw-safe, via `safeString` above; no re-read anywhere,
+    // MUT-15). Comparison is against four FIXED LITERALS — no `Array.prototype.includes`, no
+    // `Set.prototype.has` — so a poisoned intrinsic cannot divert the decision. An unrecognised
+    // string (hostile, or a future value on an older engine) reaches `MISSING_TRUSTED_POLICY`
+    // HERE, before the readiness gate, so a bad policy costs no dictionary work and there is no
+    // permissive default and no "treat unknown as off" (MUT-07).
+    const runDeterministicDetection =
+      detectorRequirement === "DETERMINISTIC_STRUCTURED_ONLY" ||
+      // DEPRECATED ALIAS (AMB-GLY373-05): retained for pin compatibility, byte-identical
+      // behaviour to the canonical name. Making it mean hard suppression is MUT-08.
+      detectorRequirement === "DISABLED_PHASE_1";
+    const suppressDeterministicDetection =
+      detectorRequirement === "STRUCTURED_DETECTION_OFF";
+    const requiresDetectorBelt = detectorRequirement === "REQUIRED";
+    if (
+      !runDeterministicDetection &&
+      !suppressDeterministicDetection &&
+      !requiresDetectorBelt
+    ) {
+      throw new PhiEngineError(
+        "MISSING_TRUSTED_POLICY",
+        context.operationId,
+        {},
+      );
+    }
 
     // §4.1 step 2 / L2 / N4: require an active READY dictionary version.
     let dictionaryVersion: DictionaryVersion;
@@ -377,7 +448,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
 
     // N4: phase-1 has no detection belt wired. A policy that REQUIRES it cannot be
     // satisfied, so we fail closed rather than brand untagged free text as safe.
-    if (detectorRequirement === "REQUIRED") {
+    if (requiresDetectorBelt) {
       throw new PhiEngineError("DETECTOR_UNAVAILABLE", context.operationId, {});
     }
 
@@ -424,8 +495,21 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const counts: Partial<Record<IdentifierClass, number>> = {};
     const literals: EscapedTokenLiteral[] = [];
     // Operation-scoped and monotonic across ALL segments of this call so two detector
-    // spans in one operation never share a synthetic subject.
+    // spans in one operation never mint the same token. Resetting this inside the segment loop
+    // is MUT-12, which OR-GLY373-04's THREE-segment fixture exists to catch.
     let detectorOrdinal = 0;
+    // GLY-373 §3.2.1: derived ONCE per `substitute()` call, before the segment loop, from exactly
+    // five trusted context scalars over a length-prefixed (netstring) preimage. Derived in BOTH
+    // injected and default mode (§4.2(4) / AMB-GLY373-01) — a mode-conditional namespace is
+    // MUT-20 and leaves the default-mode shared-store collision open. `dictionaryVersion` is a
+    // branded bigint here (a non-bigint fixed-failed above), so `toString()` is decimal digits.
+    const detectorNamespace = deriveDetectorNamespace({
+      tenantId: String(context.tenantId),
+      matterId: String(context.matterId),
+      operationId: String(context.operationId),
+      attemptId: String(context.attemptId),
+      dictionaryVersion: dictionaryVersion.toString(),
+    });
 
     for (const segment of segments) {
       // §4.1 step 5 / L6: escape reserved token-shaped source text BEFORE matching, so a
@@ -442,30 +526,38 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       // span, so a detector-only span never coalesces with a real subject.
       const detectorCanonicalByToken = new Map<string, string>();
       const detectorSpans: DetectorSpanInput[] = [];
-      const detectedSpans = detectStructuredIdentifiers(sourceText);
-      if (this.#injectedAssignmentStore && detectedSpans.length > 0) {
-        throw new PhiEngineError(
-          "DICTIONARY_UNAVAILABLE",
-          context.operationId,
-          {},
-        );
-      }
+      // GLY-373 §4.2(1): SUPPRESSION IS NON-INVOCATION, NOT FILTERING. Under
+      // `STRUCTURED_DETECTION_OFF` this call MUST NOT EXECUTE — calling it and discarding the
+      // spans is unnecessary work over PHI-bearing text AND makes the suppression untestable by
+      // call count. OR-GLY373-05 asserts a spy call count of ZERO, so a filtering implementation
+      // fails (MUT-06).
+      //
+      // GLY-373 §4.2(3): the 0.2.0 injected-mode fixed-fail that stood here is DELETED, and is
+      // replaced by NOTHING EXCEPT the namespaced allocation below. Deleting it without shipping
+      // the namespace is MUT-05 — the single most dangerous possible mis-implementation of this
+      // ticket, since detector and authority tokens would then collide on one reversal key.
+      const detectedSpans = runDeterministicDetection
+        ? detectStructuredIdentifiers(sourceText)
+        : [];
       for (const span of detectedSpans) {
         detectorOrdinal += 1;
-        const syntheticSubject = `${SYNTHETIC_DETECTOR_PREFIX}${String(context.operationId)}\u0000${detectorOrdinal}`;
-        // §7/N2: the injected assignment store is UNTRUSTED — a `getOrAllocate` REJECTION (its message
-        // could carry PHI) must fail closed with a FIXED code, never propagate raw out of substitute
-        // (this call sits outside the compile guard). A failed allocation means the detector span could
-        // not be tokenized, so failing closed prevents the identifier egressing raw.
+        // GLY-373 §3.2.3 (ordinal source) + §5: the detector token is formatted LOCALLY, from the
+        // per-operation ordinal and this call's namespace — NEVER through
+        // `#assignmentStore.getOrAllocate`. That is what keeps GLY-372 §4.4 literally true (the
+        // injected authority is never called for a synthetic subject) WHILE STILL SUBSTITUTING.
+        // The namespace, not the store, is what makes the ordinals safe. MUT-11 restores the
+        // allocation and must go RED on OR-GLY373-04's zero-authority-call assertions.
+        //
+        // The grammar is an injected dep, so its `format` is UNTRUSTED: a throw (whose message
+        // could carry PHI) fails closed with the same FIXED code a failed allocation used.
         let token: unknown;
         try {
-          token = await this.#assignmentStore.getOrAllocate({
-            tenantId: context.tenantId,
-            matterId: context.matterId,
-            subjectId: syntheticSubject as unknown as SubjectId,
-            role: CLASS_ROLE[span.identifierClass] as unknown as TokenRole,
-            dictionaryVersion,
-          });
+          token = this.#grammar.format(
+            CLASS_ROLE[span.identifierClass] as unknown as TokenRole,
+            detectorOrdinal === 1 ? null : detectorOrdinal,
+            this.#policy,
+            detectorNamespace,
+          );
         } catch {
           throw new PhiEngineError(
             "DICTIONARY_UNAVAILABLE",
@@ -473,7 +565,12 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
             {},
           );
         }
-        // §7/N2: the injected store's SUCCESS return is UNTRUSTED. Guarding only the REJECTION
+        // §7/N2 + GLY-373 §5: the formatter's SUCCESS return is UNTRUSTED and this guard is
+        // RETAINED VERBATIM for the locally-formatted detector token — a token is spliced into
+        // output ONLY after `grammar.parse(...).kind === "valid"`. A hostile internal formatter
+        // returning a grammar-invalid string (`[[D~ZZZZ~SSN_2]]`) or a raw-PHI string would
+        // otherwise reach `SubstitutionResult.segments[].text` and the reversal record. Dropping
+        // this guard is MUT-13. Guarding only the REJECTION
         // (above) still lets a hostile allocation escape two ways: a non-string carrier whose
         // `Symbol.toPrimitive`/`toString` throws raw (PHI) out of `String(token)` below (sink c),
         // and a returned raw-PHI STRING that becomes the detector token spliced into the output
@@ -483,9 +580,21 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         // legitimate allocation is rejected); a bracketed token can only carry an allow-listed role +
         // numeric sequence, structurally incapable of holding raw PHI. Anything else fails closed with
         // the same fixed code as a rejection.
+        //
+        // GRAMMAR-VALIDITY ALONE IS NOT ENOUGH, and treating it as enough was a defect. A hostile
+        // formatter can return a perfectly VALID AUTHORITY token — `[[SSN]]` — which passes
+        // `kind === "valid"` and is then spliced into output and recorded, recreating the very
+        // authority/detector collision under one reversal key that §3.2.3 exists to make
+        // structurally impossible. The parsed namespace MUST therefore equal the namespace this
+        // call derived: that is the property being relied on, so that is the property to assert.
+        const parsedToken =
+          typeof token === "string"
+            ? this.#grammar.parse(token, this.#policy)
+            : undefined;
         if (
-          typeof token !== "string" ||
-          this.#grammar.parse(token, this.#policy).kind !== "valid"
+          parsedToken === undefined ||
+          parsedToken.kind !== "valid" ||
+          parsedToken.namespace !== detectorNamespace
         ) {
           throw new PhiEngineError(
             "DICTIONARY_UNAVAILABLE",
@@ -564,7 +673,26 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
             // §6/§3.1.3 idempotency key: a replayed attempt is a no-op, never a duplicate/divergent mapping.
             attemptId: context.attemptId,
           });
-        } catch {
+        } catch (caught) {
+          // GLY-373 §3.2.6 — PHI-SCRUB SEAM S2. Exactly ONE disposition passes through, and it
+          // passes by IDENTITY against a module-private binding: not by `code`, `name`, `message`,
+          // `instanceof`, or a duck-type check, any of which an untrusted injected store could
+          // forge to ride its own error out (OR-16(b)'s forged rows exist for precisely that).
+          // A FRESH frozen error is constructed here; the sentinel itself never reaches the caller
+          // (OR-16(d)), `safeDetails`, a log, or the audit record — only the fixed literals do.
+          if (caught === REVERSAL_CANONICAL_CONFLICT) {
+            const conflict = new PhiEngineError(
+              "AMBIGUOUS_KNOWN_IDENTIFIER",
+              context.operationId,
+              { conflict: REVERSAL_CANONICAL_CONFLICT_DETAIL },
+            );
+            Object.freeze(conflict.safeDetails);
+            Object.freeze(conflict);
+            throw conflict;
+          }
+          // On EVERY non-match the existing blanket scrub is UNCHANGED, VERBATIM: the caught value
+          // is discarded — never inspected, read from, re-thrown, chained, or wrapped — and a
+          // fresh fixed error is constructed exactly as before. Weakening this is MUT-37(b).
           throw new PhiEngineError("REVERSAL_FAILED", context.operationId, {});
         }
         const identifierClass =
@@ -633,6 +761,21 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     ) {
       throw new Error("reversal_failed");
     }
+    // GLY-373 §3.2.2 — ENTRY POINT 2 of 3, and this is NEW BEHAVIOUR, not a restatement: the
+    // baseline type-checks these scalars but performs no NUL or well-formedness check, so a FORGED
+    // structural handle (`ReversalHandle` is a structural interface and the facade forwards it
+    // unvalidated) could reach a historically aliased row through here. Runs on the snapshotted
+    // locals above and BEFORE `reverseText` — hence before `mappingKeyOf` and any store read.
+    // Dropping it is MUT-24; dropping only the well-formedness half is MUT-34.
+    //
+    // The guard throws the FIXED, PHI-FREE `MISSING_TRUSTED_CONTEXT` of §3.2.4, deliberately NOT
+    // this path's legacy `reversal_failed`: `ReversalFailedError.operationId` is own-enumerable and
+    // the slug filter `SAFE_OPERATION_ID` ADMITS SSN-shaped strings, so reusing that path's id
+    // handling would turn a fail-closed branch into a fresh PHI-egress route (MUT-27). No handle
+    // scalar is echoed anywhere reachable. Legitimate reversal failures keep their current class.
+    assertTrustedContextIdShape("tenantId", tenantId);
+    assertTrustedContextIdShape("matterId", matterId);
+    assertTrustedContextIdShape("operationId", operationId);
     // §4.1 step 11 / N5: atomic reversal to CURRENT canonical values; an unknown
     // or malformed token fails the whole reversal with no partial display text.
     const reversed = await reverseText(
@@ -695,7 +838,29 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         policy: this.#policy,
         sink,
       });
-    } catch {
+    } catch (caught) {
+      // GLY-373 §3.2.2 entry point 3. The §3.2.2 guard lives in the factory, so that the handle
+      // routing fields are read EXACTLY ONCE (OR-14(i)); but this pre-existing catch would
+      // otherwise convert its fixed failure into `reverse_stream_unavailable`, and §3.2.4 requires
+      // the guard to throw the fixed frozen `MISSING_TRUSTED_CONTEXT` SYNCHRONOUSLY from
+      // `createReverseStream` (OR-14(c); failing later at `push`/`end` is MUT-25 and is not
+      // acceptable). This branch recognises that disposition and re-raises it.
+      //
+      // A FRESH, ENGINE-CONSTRUCTED error is raised on match — the caught value is NEVER
+      // re-thrown, inspected beyond its fixed code, chained, or wrapped. That is what makes the
+      // recognition safe despite being shape-based rather than identity-based: an injected stream
+      // factory CAN forge a value that matches, and forging it buys nothing, because the value
+      // that escapes carries only this engine's own fixed literals and none of the forgery's
+      // content — not its `stack`, not its `safeDetails`, nothing.
+      if (
+        isPhiEngineError(caught) &&
+        safeCodeString(caught) === "MISSING_TRUSTED_CONTEXT"
+      ) {
+        throw missingTrustedContextError();
+      }
+      // Every non-match keeps the existing blanket scrub, verbatim: an injected factory's
+      // synchronous throw (whose message could carry PHI) never propagates raw out of this
+      // public API.
       throw new Error("reverse_stream_unavailable");
     }
   }

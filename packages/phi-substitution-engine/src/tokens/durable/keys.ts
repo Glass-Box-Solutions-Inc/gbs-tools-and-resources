@@ -22,7 +22,23 @@ import type {
   WrappingKeyScope,
 } from "./ports";
 
-/** NUL fence; branded validated lexemes never contain NUL, so the join is injective. */
+/**
+ * NUL fence.
+ *
+ * GLY-373 §3.2.2 — CORRECTED. The previous wording ("branded validated lexemes never contain NUL,
+ * so the join is injective") asserted a property NOTHING ENFORCED: ingestion read these ids through
+ * `safeString`, which checks `typeof value === "string"` and nothing else, so an embedded U+0000
+ * passed. EXECUTED counterexample against these very join expressions: `("a", "b\u0000c")` and
+ * `("a\u0000b", "c")` produce the IDENTICAL joined string, i.e. two distinct tenants aliasing onto
+ * one reversal row — a live cross-tenant defect, not a hypothetical one.
+ *
+ * The join is now injective BECAUSE `assertTrustedContextIdShape` (`core/errors.ts`) rejects
+ * NUL-bearing and ill-formed-UTF-16 routing ids at ALL THREE context-id entry points —
+ * `#ingestContext`, the atomic `reverse()` handle, and the `createReverseStream` handle — before
+ * any key is derived. That check, not this comment, is what establishes the property. The key
+ * SHAPE is deliberately unchanged: changing it would invalidate every existing durable mapping row,
+ * and it does not need to change once no NUL-bearing id can reach it.
+ */
 const SEP = "\0";
 
 /** Logical reversal mapping identity (L8): `(tenant, matter, version, token)`. Tenant is FIRST and mandatory. */

@@ -35,6 +35,11 @@ function interruptedEvent(): PhiAuditEvent {
     latencyMs: { dictionary: 0, detector: 0, total: 0 },
     outcome: "interrupted",
     failureCode: null,
+    // GLY-373 §3.2.5: the audit event gained a fixed, PHI-free triage discriminator so a
+    // reversal-key canonical conflict is distinguishable from dictionary ambiguity in the durable
+    // record (both surface as AMBIGUOUS_KNOWN_IDENTIFIER). It is `null` on every other path,
+    // including this one, and the serializer's exact allow-list rejects any other value.
+    failureDetail: null,
     occurredAt: "2026-08-18T00:00:00.000Z",
   };
 }

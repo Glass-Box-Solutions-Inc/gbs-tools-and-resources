@@ -15,10 +15,14 @@ import {
   type ReversalKeys,
   InProcessReversalHandle,
   isInProcessReversalHandle,
-  safeHandleOperationId,
+  safeOperationIdOf,
 } from "./reversal";
 import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 import { safeRead } from "../core/boundary-snapshot";
+import {
+  assertTrustedContextIdShape,
+  missingTrustedContextError,
+} from "../core/errors";
 
 const OPEN = "[[";
 const CLOSE = "]]";
@@ -305,20 +309,71 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
     policy: TokenGrammarPolicy;
     sink: (safe: DisplayText) => void | Promise<void>;
   }): ReverseStream {
+    // GLY-373 §3.2.2 — ENTRY POINT 3 of 3, and this path gains its FIRST structural validation.
+    //
+    // BASELINE CORRECTION: the claim that this path "already fails closed on a bad handle" is
+    // FALSE. It read these scalars with `safeRead` and CAST them into `ReversalKeys` with no type
+    // validation whatsoever; a forged handle yielded `undefined`/arbitrary values that were simply
+    // carried into the keys. The comment reasoning about a "store miss" is not a guard: for text
+    // containing NO MAPPED TOKENS the stream can complete successfully over a garbage key.
+    //
+    // SNAPSHOT ONCE, THEN VALIDATE, THEN BUILD. Each routing field is read exactly once into a
+    // local BEFORE validation, and every downstream use reads only those locals — the bytes
+    // validated are the exact bytes used to derive a key (MUT-30/MUT-31). The guard runs
+    // SYNCHRONOUSLY here, before the `ReversalKeys` object is constructed and before any `push`;
+    // deferring to `push`/`end` is MUT-25 and is NOT acceptable, because by then the keys have
+    // been built from unvalidated input. Dropping only the well-formedness half is MUT-34, whose
+    // vector is security-relevant and not cosmetic: `tenant\uD800` and `tenant\uFFFD` produce
+    // DISTINCT JavaScript mapping keys but IDENTICAL `b64url-v1:` durable keys.
+    const tenantId = safeRead(input.handle, "tenantId");
+    const matterId = safeRead(input.handle, "matterId");
+    const dictionaryVersion = safeRead(input.handle, "dictionaryVersion");
+    // The RAW operation id, snapshotted ONCE. It is validated BELOW, BEFORE the slug filter runs.
+    const rawOperationId = safeRead(input.handle, "operationId");
+
+    // The guard error is the FIXED, PHI-FREE `MISSING_TRUSTED_CONTEXT` of §3.2.4 with the fixed
+    // placeholder operation id — never this path's legacy `ReversalFailedError`, whose
+    // own-enumerable `operationId` plus the SSN-admitting `SAFE_OPERATION_ID` slug filter would
+    // turn a fail-closed branch into a fresh PHI-egress route (MUT-27). No handle scalar is echoed.
+    //
+    // SHAPE VALIDATION IS PART OF THE GUARD, not a downstream concern. The baseline CAST these
+    // scalars into `ReversalKeys` with no type validation whatsoever, so a forged handle yielded
+    // `undefined`/arbitrary values that were carried straight into the keys; `dictionaryVersion` in
+    // particular is a branded BIGINT whose `toString` is called during key derivation, so a
+    // non-bigint carrier is a raw-throw route.
+    if (
+      typeof tenantId !== "string" ||
+      typeof matterId !== "string" ||
+      typeof rawOperationId !== "string" ||
+      typeof dictionaryVersion !== "bigint"
+    ) {
+      throw missingTrustedContextError();
+    }
+    // ORDER IS LOAD-BEARING. The §3.2.2 scan runs on the RAW operation id and runs BEFORE
+    // `safeHandleOperationId`, which applies `SAFE_OPERATION_ID.test(...)`. Validating the
+    // slug-FILTERED value instead — as an earlier revision did — was wrong twice over: a
+    // NUL-bearing or lone-surrogate id silently became the `op-unknown` placeholder and was
+    // ACCEPTED rather than rejected, and the regex ran on the rejected value first, parking the
+    // ENTIRE subject string in the legacy globals `RegExp.input` / `RegExp.$_` — a process-global
+    // slot no oracle on the thrown error can see. That is exactly the MUT-33(c) leak the
+    // own-property scan exists to avoid. A rejected value now never reaches the regex at all.
+    assertTrustedContextIdShape("tenantId", tenantId);
+    assertTrustedContextIdShape("matterId", matterId);
+    assertTrustedContextIdShape("operationId", rawOperationId);
+
+    // §7/N2: only NOW shape-restrict the operation id, and restrict THE SNAPSHOT — never the
+    // handle. `safeHandleOperationId` would read `input.handle.operationId` a SECOND time, and a
+    // getter returning a benign slug on read 1 and PHI on read 2 defeats the validation above
+    // outright: the bytes checked would not be the bytes used, and the slug regex would park the
+    // second value in `RegExp.input` / `RegExp.$_`. Executed pre-fix at the public boundary:
+    // `{"operationIdReads":2,"regexpInput":"123-45-6789"}`. Snapshot-once means snapshot once.
+    const operationId = safeOperationIdOf(rawOperationId);
     const keys: ReversalKeys = {
-      // §7/N2: read the handle routing scalars ONCE, getter-throw-safe. A hostile handle scalar getter
-      // yields `undefined` (a store miss → fail-closed reversal) instead of throwing raw (PHI) out of
-      // this synchronous factory. Cast preserves the branded key shape for the store lookup.
-      tenantId: safeRead(input.handle, "tenantId") as ReversalKeys["tenantId"],
-      matterId: safeRead(input.handle, "matterId") as ReversalKeys["matterId"],
-      dictionaryVersion: safeRead(
-        input.handle,
-        "dictionaryVersion",
-      ) as ReversalKeys["dictionaryVersion"],
-      // §7/N2: shape-restrict the operation id at capture (same as AtomicTokenReverser) so a hostile
-      // handle cannot smuggle free-text PHI into the fixed-code ReversalFailedError.operationId this
-      // stream throws on failure — a non-slug id becomes a fixed placeholder.
-      operationId: safeHandleOperationId(input.handle),
+      tenantId: tenantId as unknown as ReversalKeys["tenantId"],
+      matterId: matterId as unknown as ReversalKeys["matterId"],
+      dictionaryVersion:
+        dictionaryVersion as unknown as ReversalKeys["dictionaryVersion"],
+      operationId,
     };
     // L6: pull the escaped-literal restore off the handle (bounded capability, never raw
     // literal data) so streamed output restores source literals just like non-stream reversal.

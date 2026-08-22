@@ -40,6 +40,18 @@ export interface PhiAuditEvent {
   }>;
   readonly outcome: PhiAuditOutcome;
   readonly failureCode: string | null;
+  /**
+   * GLY-373 §3.2.5 — fixed, PHI-FREE triage discriminator for a failure whose `failureCode` is
+   * ambiguous between two distinct faults.
+   *
+   * `AMBIGUOUS_KNOWN_IDENTIFIER` is shared between DICTIONARY ambiguity and the reversal-key
+   * canonical conflict, and the ruling forbids widening the published `PhiEngineFailureCode`
+   * union. Without this projection the disambiguation would exist on the thrown error and VANISH
+   * from the durable record — precisely where an operator looks weeks later. The serializer
+   * enumerates the only strings this may carry, so it can never persist an arbitrary value.
+   * OR-GLY373-15(i) / OR-GLY373-16(f) assert it; a record carrying only `failureCode` fails them.
+   */
+  readonly failureDetail: string | null;
   readonly occurredAt: string;
 }
 

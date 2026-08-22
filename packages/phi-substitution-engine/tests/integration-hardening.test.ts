@@ -27,6 +27,31 @@ import {
   SENTINEL_OPEN,
 } from "../src/tokens/index";
 import { SharedDeadlineDetectorRunner } from "../src/detectors/deadline-runner";
+
+/**
+ * GLY-373 §5 / MUT-13 — a hostile INTERNAL token formatter.
+ *
+ * At 0.2.0 the detector-token source was the injected `assignmentStore.getOrAllocate`, and the
+ * three oracles below injected a hostile store to prove the engine never propagates a raw throw
+ * and never splices an untrusted success value into output. §3.2.3 changed the SOURCE: detector
+ * tokens are now formatted LOCALLY through `grammar.format(role, seq, policy, ns)` so the injected
+ * authority is never called for a synthetic subject at all.
+ *
+ * The INVARIANT is unchanged and the coverage is RE-POINTED, not deleted — deleting these would
+ * have silently dropped the sink-a/sink-c guard coverage. The malformed value must originate
+ * INSIDE the engine, so `parse` behaves normally (injecting at the parser would test the parser,
+ * not the guard) and only `format` is hostile.
+ */
+function hostileFormatterGrammar(format: () => unknown): any {
+  const real = new BracketTokenGrammar();
+  return {
+    parse: (candidate: string, policy: any): any =>
+      real.parse(candidate, policy),
+    scan: (text: string, policy: any): any => real.scan(text, policy),
+    format,
+  };
+}
+
 import {
   Aes256GcmAuditSpool,
   DurablePhiAuditEmitter,
@@ -5612,18 +5637,17 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     const truthReader: any = {
       readTaggedValues: async (): Promise<any[]> => [],
     };
-    const hostileAssign: any = {
-      getOrAllocate: async (): Promise<never> => {
-        throw new Error(CANARY);
-      },
-    };
+    // RE-POINTED (GLY-373 §5 / MUT-13): the detector-token source is now `grammar.format`.
+    const hostileGrammar = hostileFormatterGrammar((): never => {
+      throw new Error(CANARY);
+    });
     const engine = new ComposedSubstitutionEngine({
       coordinator,
       truthReader,
       sourceTruthRevision: REVISION,
       reversalStore: new InMemoryReversalStore(),
       engineVersion: ENGINE,
-      assignmentStore: hostileAssign,
+      grammar: hostileGrammar,
     } as any);
     let thrown: any;
     let out: any;
@@ -5719,23 +5743,22 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     const truthReader: any = {
       readTaggedValues: async (): Promise<any[]> => [],
     };
-    const hostileAssign: any = {
-      getOrAllocate: async (): Promise<any> => ({
-        [Symbol.toPrimitive]: (): never => {
-          throw new Error(CANARY);
-        },
-        toString: (): never => {
-          throw new Error(CANARY);
-        },
-      }),
-    };
+    // RE-POINTED (GLY-373 §5 / MUT-13): sink (c) — a non-string carrier whose coercion throws raw.
+    const hostileGrammar = hostileFormatterGrammar(() => ({
+      [Symbol.toPrimitive]: (): never => {
+        throw new Error(CANARY);
+      },
+      toString: (): never => {
+        throw new Error(CANARY);
+      },
+    }));
     const engine = new ComposedSubstitutionEngine({
       coordinator,
       truthReader,
       sourceTruthRevision: REVISION,
       reversalStore: new InMemoryReversalStore(),
       engineVersion: ENGINE,
-      assignmentStore: hostileAssign,
+      grammar: hostileGrammar,
     } as any);
     let thrown: any;
     let out: any;
@@ -5766,17 +5789,18 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     const truthReader: any = {
       readTaggedValues: async (): Promise<any[]> => [],
     };
-    // CANARY is not `[[...]]`-shaped, so it can never be a genuine grammar token.
-    const hostileAssign: any = {
-      getOrAllocate: async (): Promise<any> => CANARY,
-    };
+    // RE-POINTED (GLY-373 §5 / MUT-13): sink (a) — a raw-PHI string that must never be spliced
+    // into `SubstitutionResult.segments[].text` or recorded as a reversal mapping. CANARY is not
+    // `[[...]]`-shaped, so it can never be a genuine grammar token; the `:486-495`-equivalent
+    // re-parse guard is what stops it, and dropping that guard is MUT-13.
+    const hostileGrammar = hostileFormatterGrammar(() => CANARY);
     const engine = new ComposedSubstitutionEngine({
       coordinator,
       truthReader,
       sourceTruthRevision: REVISION,
       reversalStore: new InMemoryReversalStore(),
       engineVersion: ENGINE,
-      assignmentStore: hostileAssign,
+      grammar: hostileGrammar,
     } as any);
     let thrown: any;
     let out: any;

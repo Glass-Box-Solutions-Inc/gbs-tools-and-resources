@@ -430,7 +430,12 @@ describe("GLY-372 assignment-authority injection seam", () => {
       purpose: "generation",
     });
     const detectorOutput = String(detectorResult.segments[0]!.text);
-    expect(detectorOutput).toMatch(/^\[\[SSN(?:_\d+)?\]\]$/);
+    // GLY-373 AMENDMENT (AMB-GLY373-01, §4.2(4)): detector tokens are NAMESPACED in BOTH injected
+    // and default mode, so default-mode detector token text deliberately changes from `[[SSN_2]]`
+    // to `[[D~<16 hex>~SSN_2]]`. A mode-conditional namespace is MUT-20 and would leave the
+    // default-mode shared-store collision open. The assertion is TIGHTENED, not relaxed: the
+    // namespace must be present and well-formed, where the old pattern only required a role.
+    expect(detectorOutput).toMatch(/^\[\[D~[0-9a-f]{16}~SSN(?:_\d+)?\]\]$/);
     expect(
       String(
         await detectorDefault.engine.reverse(
@@ -527,13 +532,36 @@ describe("GLY-372 assignment-authority injection seam", () => {
     expect(callsB).toBe(0);
   });
 
+  // GLY-373 AMENDMENT (AMB-GLY373-04, delivered by OR-GLY373-04). GLY-372 §3.1/§4.4 expressly
+  // permit "a delta amendment with its exact namespace/reversal oracle before this expected
+  // failure may change", and this is that amendment: the EXPECTED OUTCOME changes from fixed-fail
+  // to NAMESPACED SUCCESS, because the fixed-fail existed only to protect a collision the
+  // namespace now prevents by construction. Every zero-authority-call assertion is kept VERBATIM —
+  // that is the part of §4.4 that still binds, and deleting the test would have lost it.
   it("GLY372-OR-09: injected mode never persists synthetic detector subjects", async () => {
     const injected = new RecordingSharedAssignmentStore();
     const rawCounter = { calls: 0 };
     const dev = createProtectedAiProvider({
       taggedValues: [],
       assignmentStore: injected,
-      invokeRaw: countingRawProvider(rawCounter),
+      // A provider whose reply carries NO tokens. `countingRawProvider` echoes a literal
+      // `[[Claimant]]`, and this fixture has no tagged values, so that token has no reversal
+      // mapping and the STUB — not detection — would fail the call closed at reversal. Using it
+      // here would have left OR-09 unable to assert the namespaced SUCCESS its amendment mandates.
+      invokeRaw: {
+        generateText: () => {
+          rawCounter.calls += 1;
+          return Promise.resolve(branded<TokenizedText>("Acknowledged."));
+        },
+        generateStream: async (_options, onChunk): Promise<void> => {
+          rawCounter.calls += 1;
+          await onChunk(branded<TokenizedText>("Acknowledged."));
+        },
+        embedText: () => {
+          rawCounter.calls += 1;
+          return Promise.resolve([1]);
+        },
+      },
     });
     let output: unknown;
     let error: unknown;
@@ -546,12 +574,20 @@ describe("GLY-372 assignment-authority injection seam", () => {
     } catch (caught) {
       error = caught;
     }
-    expect(output).toBeUndefined();
-    expectFixedFailure(error);
+    // AMENDED — F-J1 REGRESSION ASSERTION, and the expected outcome is NAMESPACED SUCCESS.
+    // At the baseline, detection under injected authority fixed-failed with
+    // `DICTIONARY_UNAVAILABLE` BEFORE the provider was ever reached, so `rawCounter.calls` was 0.
+    // The whole call now SUCCEEDS end to end.
+    expect(error).toBeUndefined();
+    expect(output).toBeDefined();
+    expect(rawCounter.calls).toBe(1);
+    // UNCHANGED, VERBATIM — GLY-372 §4.4 still binds: the injected authority is NEVER called for a
+    // synthetic detector subject, and nothing synthetic is persisted in it. Detector ordinals come
+    // from the per-operation counter and detector tokens are formatted locally; the NAMESPACE, not
+    // the store, is what makes them safe. MUT-11 restores the allocation and must go RED here.
     expect(injected.state.acquisitionCalls).toHaveLength(0);
     expect(injected.state.retirementCalls).toHaveLength(0);
     expect(injected.state.assigned.size).toBe(0);
-    expect(rawCounter.calls).toBe(0);
   });
 
   it("GLY372-OR-10: injected mode reacquires on every substitute and observes peer retirement", async () => {

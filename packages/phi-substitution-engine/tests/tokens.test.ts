@@ -138,7 +138,7 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
 
   // ---- GLY-335 Wave 0 seam-freeze: the ReversalWriteStore PORT CONTRACT (roadmap defect A#3) ----
 
-  it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: a divergent same-attempt replay is a no-op (keeps first canonical); a new attempt may update", async () => {
+  it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: a divergent same-attempt replay FAILS CLOSED (GLY-373 §3.2.5); a new attempt may still update", async () => {
     const r = await loadTokensHarness().run(
       "M-GLY335-REVERSAL-RECORD-IDEMPOTENT",
       {
@@ -146,11 +146,15 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
         attemptId: "att-replay-1",
       },
     );
-    // Exactly one mapping, and a DIVERGENT replay under the same attemptId did NOT overwrite it —
-    // the first canonical stands (proves the port's "replay is a no-op" promise, not map dedup).
+    // Exactly one mapping, and a DIVERGENT replay under the same attemptId did NOT overwrite it.
+    // GLY-373 §3.2.5 AMENDMENT: it is no longer enough that the write was IGNORED — silently
+    // keeping the first canonical is the §10.2 cross-value disclosure, because the caller believes
+    // its second value was tokenized while the token reverses to the first. The write must now be
+    // REJECTED. The first canonical still stands and is still reversible (§3.2.5 requirement 2).
     expect(r.metrics.distinctMappings).toBe(1);
     expect(r.metrics.replayHeldFirstCanonical).toBe(true);
     expect(r.metrics.divergentReplayIgnored).toBe(true);
+    expect(r.metrics.divergentReplayRejected).toBe(true);
     // A DIFFERENT attempt is allowed to update the current canonical.
     expect(r.metrics.differentAttemptUpdated).toBe(true);
     expect(r.reversalLookupTokens).toEqual(["[[Claimant]]"]);

@@ -47,6 +47,7 @@ import type {
   OperationAttemptId,
 } from "../src/core/brands";
 import { expectNoCanary } from "./test-helpers";
+import { REVERSAL_CANONICAL_CONFLICT } from "../src/tokens/conflict-sentinel";
 
 const CLAIMANT = DEFAULT_TOKEN;
 const WITNESS = brand<SubstitutionToken>("[[Witness]]");
@@ -449,7 +450,14 @@ describe("L2.4 DurableReversalStore — idempotency (§3.1.3, §6)", () => {
     expect(map.get(CLAIMANT)).toBe("Maria García");
   });
 
-  it("same-attempt DIVERGENT replay keeps the FIRST canonical and creates no second commit (MUT-IDEMPOTENCY-INCLUDE-CANONICAL / MUT-OVERWRITE-SAME-ATTEMPT)", async () => {
+  // GLY-373 §3.2.5 AMENDMENT. The baseline accepted this write and silently kept the first
+  // canonical. That silence IS the §10.2 cross-value PHI disclosure: the caller believes its second
+  // value was tokenized, while the token reverses to the FIRST value's data — reached with entirely
+  // well-formed input, within one tenant. The write must now FAIL CLOSED. Everything the original
+  // oracle proved is RETAINED and asserted below (first canonical stands, no second commit); what
+  // is ADDED is that the call is rejected rather than acknowledged. MUT-35 restores the keep-first
+  // behaviour and must go RED here.
+  it("same-attempt DIVERGENT replay FAILS CLOSED, keeps the FIRST canonical, and creates no second commit (GLY-373 §3.2.5; MUT-35 / MUT-IDEMPOTENCY-INCLUDE-CANONICAL / MUT-OVERWRITE-SAME-ATTEMPT)", async () => {
     const h = makeHarness();
     await h.store.record(
       recordInput({
@@ -457,12 +465,23 @@ describe("L2.4 DurableReversalStore — idempotency (§3.1.3, §6)", () => {
         canonical: "Maria García",
       }),
     );
-    await h.store.record(
-      recordInput({
-        attemptId: brand<OperationAttemptId>("att-x"),
-        canonical: "TOTALLY DIFFERENT",
-      }),
-    );
+    let rejected: unknown;
+    try {
+      await h.store.record(
+        recordInput({
+          attemptId: brand<OperationAttemptId>("att-x"),
+          canonical: "TOTALLY DIFFERENT",
+        }),
+      );
+    } catch (caught) {
+      rejected = caught;
+    }
+    // Seam S1 rethrows the branded sentinel UNCHANGED and by IDENTITY — this is the S1-boundary
+    // assertion, which is the ONLY thing that kills MUT-37(a) (a correct S2 masks it end-to-end).
+    expect(rejected).toBe(REVERSAL_CANONICAL_CONFLICT);
+    // READ-AFTER-FAIL (§3.2.5 requirement 2): the conflicting canonical is never reachable by
+    // reversal and the first mapping is intact. Proven from the STORE'S STATE, never from the write
+    // path — MUT-36 rejects only AFTER persisting and is caught by exactly this assertion.
     const map = await h.store.resolveEncounteredTokens(resolveInput());
     expect(map.get(CLAIMANT)).toBe("Maria García"); // first canonical stands
     expect(map.get(CLAIMANT)).not.toBe("TOTALLY DIFFERENT");
@@ -581,29 +600,54 @@ describe("L2.4 DurableReversalStore — cross-replica atomic publish (F1, two mo
     expect(map.get(CLAIMANT)).toBe("Maria García");
   });
 
-  it("divergent canonical under one attempt racing on two replicas — first wins, one commit, loser no-ops", async () => {
-    const t = twoMounts();
-    const settled = await Promise.allSettled([
-      t.a.store.record(
-        recordInput({
-          attemptId: brand<OperationAttemptId>("att-r"),
-          canonical: "Maria García",
-        }),
-      ),
-      t.b.store.record(
-        recordInput({
-          attemptId: brand<OperationAttemptId>("att-r"),
-          canonical: "TOTALLY DIFFERENT",
-        }),
-      ),
-    ]);
-    expect(settled.every((r) => r.status === "fulfilled")).toBe(true); // loser is an idempotent no-op
-    expect(t.publishedTotal()).toBe(1);
-    const map = await t.a.store.resolveEncounteredTokens(resolveInput());
-    const winner = map.get(CLAIMANT);
-    expect(["Maria García", "TOTALLY DIFFERENT"]).toContain(winner); // exactly ONE canonical won
-    const again = await t.b.store.resolveEncounteredTokens(resolveInput());
-    expect(again.get(CLAIMANT)).toBe(winner); // stable across replicas — the loser never overwrote
+  // GLY-373 §3.2.5 AMENDMENT — this is OR-GLY373-15(g), the CONCURRENCY oracle, and it is the row
+  // that pins claim/publication LINEARIZABILITY. The baseline expected BOTH writers to settle
+  // `fulfilled` with the loser a silent no-op; §10.3 row 4 names that exact shape as the executed
+  // check-then-set defect (`{"statuses":["fulfilled","fulfilled"],"after":"SECOND"}`), so a run
+  // where both settle fulfilled is now a FAILURE. Of two concurrent DIVERGENT writers EXACTLY ONE
+  // succeeds and the other is rejected, and the surviving canonical is the one the successful call
+  // returned. Transaction PLACEMENT is deliberately NOT asserted — it is unobservable at this
+  // baseline (the publish seam exposes neither the existing canonical nor a comparator), and the
+  // spec may only claim what an oracle can observe; an implementation reaching the linearizable
+  // outcome by another route is conformant. Run repeatedly to reduce interleaving luck.
+  it("divergent canonical under one attempt racing on two replicas — EXACTLY ONE succeeds, the other is REJECTED (GLY-373 OR-15(g), §3.2.5 linearizability)", async () => {
+    for (let round = 0; round < 3; round += 1) {
+      const t = twoMounts();
+      const settled = await Promise.allSettled([
+        t.a.store.record(
+          recordInput({
+            attemptId: brand<OperationAttemptId>("att-r"),
+            canonical: "Maria García",
+          }),
+        ),
+        t.b.store.record(
+          recordInput({
+            attemptId: brand<OperationAttemptId>("att-r"),
+            canonical: "TOTALLY DIFFERENT",
+          }),
+        ),
+      ]);
+      const fulfilled = settled.filter((r) => r.status === "fulfilled");
+      const rejectedResults = settled.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejectedResults).toHaveLength(1);
+      // The rejection is the branded sentinel at the S1 boundary, by identity — never a forged or
+      // duck-typed look-alike, and never a converted `ReversalFailedError`.
+      expect((rejectedResults[0] as PromiseRejectedResult).reason).toBe(
+        REVERSAL_CANONICAL_CONFLICT,
+      );
+      expect(t.publishedTotal()).toBe(1);
+      // The surviving canonical is the one the SUCCESSFUL call wrote — asserted by construction:
+      // the winner is whichever settled fulfilled.
+      const winnerCanonical =
+        settled[0]!.status === "fulfilled"
+          ? "Maria García"
+          : "TOTALLY DIFFERENT";
+      const map = await t.a.store.resolveEncounteredTokens(resolveInput());
+      expect(map.get(CLAIMANT)).toBe(winnerCanonical);
+      const again = await t.b.store.resolveEncounteredTokens(resolveInput());
+      expect(again.get(CLAIMANT)).toBe(winnerCanonical); // stable across replicas
+    }
   });
 
   it("divergent matter under one attempt racing on two replicas — one rejects, one commit, no second mapping", async () => {

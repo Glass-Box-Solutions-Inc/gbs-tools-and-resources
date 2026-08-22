@@ -1,6 +1,6 @@
 {
   "name": "@glass-box-solutions-inc/phi-substitution-engine",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deterministic PHI substitution engine (phase-1 frozen contract). Framework-free core with opt-in adapters.",
   "private": true,
   "main": "./dist/index.js",
