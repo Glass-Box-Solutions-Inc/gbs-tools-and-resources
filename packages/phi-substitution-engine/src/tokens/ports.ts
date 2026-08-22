@@ -28,6 +28,16 @@ export type ParsedToken =
       token: SubstitutionToken;
       role: TokenRole;
       sequence: number | null;
+      /**
+       * GLY-373 §3.1: the DETECTOR namespace label (16 lowercase hex characters) for a
+       * `[[D~ns~Role_N]]` token, or `null` for an AUTHORITY-namespace token (`[[Role]]` /
+       * `[[Role_N]]`, byte-identical to 0.2.0).
+       *
+       * REQUIRED, deliberately not optional: an internal reader or an external implementer
+       * must not be able to silently ignore the field and treat a namespaced detector token
+       * as an authority token — that is the whole invariant the field carries.
+       */
+      namespace: string | null;
     }>
   | Readonly<{
       kind: "malformed";
@@ -36,16 +46,24 @@ export type ParsedToken =
         | "NESTED"
         | "OVERLONG"
         | "BAD_SEQUENCE"
-        | "BAD_DELIMITER";
+        | "BAD_DELIMITER"
+        | "BAD_NAMESPACE";
     }>
   | Readonly<{ kind: "not_token" }>;
 
 export interface TokenGrammar {
   parse(candidate: string, policy: TokenGrammarPolicy): ParsedToken;
+  /**
+   * GLY-373 §3.1: `namespace` is OPTIONAL. Absent/`undefined` emits the AUTHORITY production,
+   * byte-identical to 0.2.0. When present it MUST be exactly 16 lowercase hex characters;
+   * a violation throws the fixed `token_grammar_bad_namespace` rather than emitting an
+   * unvalidated namespace into a token.
+   */
   format(
     role: TokenRole,
     sequence: number | null,
     policy: TokenGrammarPolicy,
+    namespace?: string,
   ): SubstitutionToken;
   /** Returns all complete or token-like/malformed spans; nested and overlong input is not ignored. */
   scan(

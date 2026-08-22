@@ -24,6 +24,7 @@ import {
   ReversalFailedError,
   ReversalHandleNotSerializableError,
 } from "./errors";
+import { REVERSAL_CANONICAL_CONFLICT } from "./conflict-sentinel";
 import {
   restoreSentinelLiterals,
   SENTINEL_CLOSE,
@@ -146,6 +147,16 @@ export class InMemoryReversalStore implements ReversalWriteStore {
   readonly #canonicalByKey = new Map<string, string>();
   /** (tenant+matter+version+token)+attemptId pairs already written — for replay no-op (§3.1.3). */
   readonly #recordedAttempts = new Set<string>();
+  /**
+   * GLY-373 §3.2.5: which attempt published the CURRENT canonical for each mapping key.
+   *
+   * THE ATTEMPT FILTER IS LOAD-BEARING, exactly as in the durable store. The mapping key excludes
+   * `attemptId` (`:154-161`), so the current canonical may legitimately have been updated by a
+   * LATER attempt (`core/contracts.ts:176-195`). Comparing a replay against the current canonical
+   * unfiltered would FALSELY REJECT a legitimate idempotent replay of an older attempt. §3.2.5
+   * scopes the rejection to the DIVERGENT SAME-ATTEMPT replay and nothing wider (OR-15(h)).
+   */
+  readonly #currentAttemptByKey = new Map<string, string>();
 
   constructor(maximumEncounteredTokenBatch = 256) {
     this.maximumEncounteredTokenBatch = maximumEncounteredTokenBatch;
@@ -176,14 +187,42 @@ export class InMemoryReversalStore implements ReversalWriteStore {
     if (input.attemptId !== undefined) {
       const attemptKey = `${key}${SEP}${input.attemptId}`;
       if (this.#recordedAttempts.has(attemptKey)) {
-        // Idempotent replay: the same (attemptId, token) was already written — no-op that keeps
-        // the FIRST canonical, so a retry never overwrites the mapping a token egressed under
-        // (even if the replay carries a divergent payload).
+        // GLY-373 §3.2.5 — REUSE REJECTION, and requirement 4 puts the IDENTICAL contract on both
+        // stores: consumers pick a store by deployment shape and must not get different safety.
+        //
+        // The baseline kept the first canonical here "even if the replay carries a divergent
+        // payload". A divergent payload under ONE attempt is not a replay at all — it is two
+        // different values competing for one token — and silently keeping the first is a
+        // cross-value PHI disclosure within a tenant, reached with entirely well-formed input
+        // (§10.2, executed: `tokenCollision:true, canonicalsDiffer:true`). MUT-35 restores the
+        // keep-first behaviour and must go RED.
+        //
+        // A same-canonical replay is still an idempotent no-op (OR-15(f)), and a FRESH attemptId
+        // may still update the current canonical (OR-15(h), `contracts.ts:176-195`) — the
+        // rejection is scoped to the divergent SAME-ATTEMPT replay and nothing wider, because a
+        // blanket same-key rejection would break legitimate authority-token updates.
+        const persisted =
+          this.#currentAttemptByKey.get(key) ===
+          (input.attemptId as unknown as string)
+            ? this.#canonicalByKey.get(key)
+            : undefined;
+        if (persisted !== undefined && persisted !== input.canonical) {
+          // §3.2.6: the branded sentinel, never an error object — the two PHI-scrub seams pass
+          // exactly this value through by identity and scrub everything else verbatim.
+          throw REVERSAL_CANONICAL_CONFLICT;
+        }
         return;
       }
       this.#recordedAttempts.add(attemptKey);
     }
     this.#canonicalByKey.set(key, input.canonical);
+    if (input.attemptId !== undefined) {
+      this.#currentAttemptByKey.set(key, input.attemptId as unknown as string);
+    } else {
+      // A concrete-only seeder write carries no attempt, so no attempt owns this canonical and no
+      // same-attempt conflict can be attributed to it.
+      this.#currentAttemptByKey.delete(key);
+    }
   }
 
   async resolveEncounteredTokens(input: {
@@ -351,12 +390,28 @@ const SAFE_OPERATION_ID = /^[A-Za-z0-9.:-]{1,128}$/;
 export function safeHandleOperationId(handle: ReversalHandle): OperationId {
   try {
     const id = (handle as { operationId?: unknown }).operationId;
-    return typeof id === "string" && SAFE_OPERATION_ID.test(id)
-      ? (id as unknown as OperationId)
-      : UNKNOWN_OPERATION_ID;
+    return safeOperationIdOf(id);
   } catch {
     return UNKNOWN_OPERATION_ID;
   }
+}
+
+/**
+ * The same shape restriction applied to an ALREADY-SNAPSHOTTED value — no property read, so no
+ * getter runs and nothing can change between validation and use.
+ *
+ * This exists because `safeHandleOperationId` reads the handle LIVE. A caller that has already
+ * snapshotted and validated the raw id and then calls `safeHandleOperationId` performs a SECOND
+ * read, and a hostile getter returning a benign slug first and PHI second defeats the validation
+ * entirely — the bytes checked are not the bytes used, and the regex above then parks the second
+ * value in `RegExp.input` / `RegExp.$_`. Executed against the pre-fix path-3 constructor:
+ * `{"operationIdReads":2,"regexpInput":"123-45-6789","regexpDollarUnderscore":"123-45-6789"}`.
+ * Snapshot-once callers MUST use this function and pass the value they validated.
+ */
+export function safeOperationIdOf(id: unknown): OperationId {
+  return typeof id === "string" && SAFE_OPERATION_ID.test(id)
+    ? (id as unknown as OperationId)
+    : UNKNOWN_OPERATION_ID;
 }
 
 /** Adapts the shared `reverseText` to the frozen `TokenReverser` port. */

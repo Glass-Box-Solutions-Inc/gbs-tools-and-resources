@@ -49,7 +49,33 @@ export interface TrustedMatterAiPolicy {
   readonly locale: KnownLocale;
   readonly activeDictionaryVersion: DictionaryVersion;
   readonly schemaVersion: SchemaVersion;
-  readonly detectorRequirement: "DISABLED_PHASE_1" | "REQUIRED";
+  /**
+   * GLY-373 §4.1 — governs whether the DETERMINISTIC STRUCTURED-IDENTIFIER pass executes. It does
+   * NOT gate the ML detector belt beyond the unchanged `"REQUIRED"` fail-closed; at 0.2.0 the name
+   * promised suppression it never delivered (F-J1), and §4.2 is where the mapping is now exact.
+   *
+   * CONSUMER-VISIBLE BEHAVIOUR CHANGES, STATED RATHER THAN DENIED: a consumer that leaves its
+   * existing literal untouched WILL observe different results. The alias preserves the TYPE, not
+   * the behaviour — baseline injected detection fixed-failed, whereas the alias now succeeds with
+   * namespaced substitution, and default-mode detector token text changes from `[[SSN_2]]` to
+   * `[[D~<ns>~SSN_2]]` (AMB-GLY373-01).
+   */
+  readonly detectorRequirement: /** NEW canonical name for today's behaviour: the deterministic structured pass RUNS. */
+    | "DETERMINISTIC_STRUCTURED_ONLY"
+    /**
+     * DEPRECATED ALIAS — identical behaviour to `DETERMINISTIC_STRUCTURED_ONLY`, retained for pin
+     * compatibility (AMB-GLY373-05: Glassy and the dev factory both emit it; removing it would
+     * make 0.3.0 a breaking release requiring a lockstep three-repo edit). Remove in a later major.
+     */
+    | "DISABLED_PHASE_1"
+    /**
+     * NEW — HARD SUPPRESSION. `detectStructuredIdentifiers` is NOT INVOKED. Untagged identifiers
+     * in free text pass through unsubstituted, so this is raw egress of anything the dictionary
+     * does not cover; ruling g8 expressly REJECTED it for both consumers for that reason.
+     */
+    | "STRUCTURED_DETECTION_OFF"
+    /** Unchanged: the belt is not wired, so this fixed-fails `DETECTOR_UNAVAILABLE`. */
+    | "REQUIRED";
   /** Present only for an authorized, unexpired OFF_APPROVED decision. */
   readonly approvedOffDecisionId: string | null;
 }

@@ -104,6 +104,21 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
       "gcmDecrypt",
       "buildReversalAad",
       "mappingKeyOf",
+      // GLY-373 OR-GLY373-08 / MUT-17: the namespace machinery, the length-prefix encoder, the
+      // §3.2.6 conflict sentinel, the §3.2.2 guard, and any detector seam ALL stay internal. The
+      // root surface is exactly the 0.2.0 set — four factories plus the error surface — and this
+      // release adds nothing to it. Exporting the derivation helper would let a consumer mint
+      // namespace labels outside the engine; exporting a detection seam would be the capability
+      // widening AMB-GLY373-06 expressly rejected.
+      "deriveDetectorNamespace",
+      "DETECTOR_NAMESPACE_HEX_LENGTH",
+      "REVERSAL_CANONICAL_CONFLICT",
+      "REVERSAL_CANONICAL_CONFLICT_DETAIL",
+      "isReversalCanonicalConflict",
+      "assertTrustedContextIdShape",
+      "missingTrustedContextError",
+      "detectStructuredIdentifiers",
+      "SYNTHETIC_DETECTOR_PREFIX",
     ]) {
       expect(mod[name], `${name} MUST NOT be a root export`).toBeUndefined();
     }

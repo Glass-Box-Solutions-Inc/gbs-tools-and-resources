@@ -24,12 +24,14 @@ import type {
   ReversalWriteStore,
 } from "../../core/contracts";
 import type {
+  OperationAttemptId,
   DictionaryVersion,
   MatterId,
   SubstitutionToken,
   TenantId,
 } from "../../core/brands";
 import { ReversalFailedError } from "../errors";
+import { REVERSAL_CANONICAL_CONFLICT } from "../conflict-sentinel";
 import { buildReversalAad, MATTER_EXPIRES_AT } from "./aad";
 import { bytesEqual, DEK_BYTES, gcmDecrypt, gcmEncrypt } from "./envelope";
 import {
@@ -44,6 +46,7 @@ import type {
   DurableReversalStoreDependencies,
   EncryptedReversalRecordBlob,
   KeyProvider,
+  ReversalMappingKey,
   ReversalRetentionClass,
   RetentionClassificationInput,
   SpoolVolume,
@@ -286,10 +289,40 @@ export class DurableReversalStore implements ReversalWriteStore {
         if (published.expired) {
           throw new ReversalFailedError();
         }
-        // Valid same-scope replay (exact OR divergent canonical): flush the EXISTING commit before
-        // acknowledging (covers a race with an incompletely-flushed first caller), keep the FIRST
-        // canonical (never overwrite), and return a durable no-op.
+        // GLY-373 §3.2.5 — REUSE REJECTION on a divergent same-attempt replay.
+        //
+        // ATOMICITY IS CLAIM/PUBLICATION LINEARIZABILITY, not a pinned transaction placement
+        // (§10.3 row 4: the publish seam exposes neither the existing canonical nor a comparator,
+        // so placement is unobservable and the spec may only claim what an oracle can see). The
+        // linearization point is `publish()` itself, which atomically claims the idempotency key:
+        // of two concurrent divergent writers EXACTLY ONE takes the `published` branch and wins,
+        // and the loser lands here and is rejected. OR-15(g) is the whole of the requirement.
+        //
+        // No port change is made (§10.3 rows 2 and 4): the existing canonical is recovered through
+        // the EXISTING `readCurrent` + `#openRecord` path, not a new comparator on the seam.
+        //
+        // Flush the EXISTING commit FIRST (covers a race with an incompletely-flushed first
+        // caller) so the value we compare against is durable before we act on it.
         await this.#spool.flush(published.commit);
+        const persisted = await this.#existingCanonical(
+          tenantId,
+          matterId,
+          dictionaryVersion,
+          token,
+          mappingKey,
+          attemptId,
+        );
+        if (persisted !== undefined && persisted !== canonical) {
+          // §3.2.6: the branded sentinel, never an error object. Thrown BEFORE any write of the
+          // conflicting canonical, so requirement 2 holds by construction — the second canonical
+          // is never reachable by reversal. The prepared-but-unpublished artifact of this
+          // rejected write may persist; it acquires no `reversal_claim`/`reversal_current`
+          // reference and is therefore within normal orphan reclamation. Rejecting only AFTER
+          // persisting is MUT-36, killed by OR-15(c)'s read-after-fail row.
+          throw REVERSAL_CANONICAL_CONFLICT;
+        }
+        // Same canonical (or an unreadable/expired current mapping): a durable idempotent no-op,
+        // exactly as before this change (OR-15(f)).
         return;
       }
 
@@ -297,11 +330,23 @@ export class DurableReversalStore implements ReversalWriteStore {
       // mapping survives process death / replica loss / remount. Removing this is MUT-RETURN-BEFORE-FLUSH.
       await this.#spool.flush(published.commit);
       return;
-    } catch {
-      // Fixed, safe surface only (C1 / finding F3). DISCARD every caught value — never inspect,
-      // preserve, or re-throw it, not even a `ReversalFailedError` (an injected dependency can throw
-      // one carrying a `cause` / provider / DB text). Always construct a FRESH error so no underlying
-      // message, `cause`, or PHI can ride out. (MUT-LEAK-UNDERLYING-ERROR / contaminated-error oracle.)
+    } catch (caught) {
+      // GLY-373 §3.2.6 — PHI-SCRUB SEAM S1. Exactly ONE disposition passes through, by IDENTITY
+      // against a module-private binding — never by `code`, `name`, `message`, `instanceof`, or
+      // a duck-type check, any of which an untrusted injected dependency could forge to ride its
+      // own error out. The sentinel is rethrown UNCHANGED; S2 upstream is what converts it into
+      // the fixed `AMBIGUOUS_KNOWN_IDENTIFIER` + `conflict` discriminator. This branch must be
+      // asserted at THIS boundary (OR-16(b2)): a correct S2 masks an S1 mutant end-to-end, so
+      // MUT-37(a) is killed only by an identity oracle on `DurableReversalStore.record()`.
+      if (caught === REVERSAL_CANONICAL_CONFLICT) {
+        throw caught;
+      }
+      // Fixed, safe surface only (C1 / finding F3), UNCHANGED AND VERBATIM on every non-match.
+      // DISCARD every caught value — never inspect, preserve, or re-throw it, not even a
+      // `ReversalFailedError` (an injected dependency can throw one carrying a `cause` /
+      // provider / DB text). Always construct a FRESH error so no underlying message, `cause`,
+      // or PHI can ride out. (MUT-LEAK-UNDERLYING-ERROR / contaminated-error oracle; MUT-37(a)
+      // makes this branch re-throw the caught value and must go RED at the S1 boundary.)
       throw new ReversalFailedError();
     }
   }
@@ -394,6 +439,57 @@ export class DurableReversalStore implements ReversalWriteStore {
    * failure. AAD is reconstructed from the REQUESTED tenant/matter/version/token (never merely from
    * stored metadata) plus the authenticated record metadata (§6, N5).
    */
+  /**
+   * GLY-373 §3.2.5: reads the canonical this attempt's idempotency claim actually published,
+   * through the EXISTING bounded read path — no new port method and no comparator on the publish
+   * seam (§10.3 rows 2 and 4 resolved without a port change).
+   *
+   * THE ATTEMPT FILTER IS LOAD-BEARING, NOT DEFENSIVE STYLE. `readCurrent` is keyed on the
+   * mapping key `(tenant, matter, version, token)`, which deliberately EXCLUDES `attemptId`
+   * (`tokens/reversal.ts:163-187`), so the CURRENT mapping may legitimately have been published by
+   * a LATER attempt — the baseline contract says a token reverses to its CURRENT canonical and a
+   * new attempt MAY update it (`core/contracts.ts:176-195`). Comparing against the current
+   * canonical unfiltered therefore FALSELY REJECTS a legitimate idempotent replay of an older
+   * attempt, which the pre-existing MUT-DURABLE-ROLLBACK oracle catches. §3.2.5 scopes the
+   * rejection to the DIVERGENT SAME-ATTEMPT REPLAY and to nothing wider, precisely so cross-attempt
+   * updates keep working (OR-15(h)); `blob.meta.attemptId` is how that scope is enforced here.
+   *
+   * Returns `undefined` — i.e. "nothing to conflict with" — when the mapping is absent, expired, or
+   * was published by a DIFFERENT attempt. RESIDUAL, recorded rather than papered over: if a later
+   * attempt has already overwritten the current mapping, a subsequent divergent replay of the
+   * earlier attempt is not detected here. The disclosure §3.2.5 targets — two `substitute()` calls
+   * under ONE context tuple minting one token for two different values — is closed in the direct
+   * case, which is the case §10.2's executed evidence raised.
+   */
+  async #existingCanonical(
+    tenantId: TenantId,
+    matterId: MatterId,
+    dictionaryVersion: DictionaryVersion,
+    token: SubstitutionToken,
+    mappingKey: ReversalMappingKey,
+    attemptId: OperationAttemptId,
+  ): Promise<string | undefined> {
+    const results = await this.#spool.readCurrent([{ mappingKey }]);
+    const found = results[0];
+    if (found === undefined) {
+      return undefined;
+    }
+    if (
+      (found.encryptedRecord.meta.attemptId as unknown as string) !==
+      (attemptId as unknown as string)
+    ) {
+      return undefined;
+    }
+    return this.#openRecord(
+      tenantId,
+      matterId,
+      dictionaryVersion,
+      token,
+      found.encryptedRecord,
+      this.#nowEpochMilliseconds(),
+    );
+  }
+
   async #openRecord(
     tenantId: TenantId,
     matterId: MatterId,

@@ -39,6 +39,12 @@ export function preparedToTerminalEvent(
   outcome: PhiAuditOutcome,
   failureCode: string | null,
   occurredAt: string,
+  /**
+   * GLY-373 §3.2.5: the fixed PHI-free triage discriminator, defaulted to `null` so every existing
+   * call site keeps its exact current behaviour. The serializer's value allow-list is what makes
+   * this safe; nothing derived from a caught value is ever passed here.
+   */
+  failureDetail: string | null = null,
 ): PhiAuditEvent {
   const dictionaryVersion = safeRead(prepared, "dictionaryVersion");
   let dictionaryVersionString: string | null = null;
@@ -81,6 +87,7 @@ export function preparedToTerminalEvent(
     latencyMs: safeRead(prepared, "latencyMs") as PhiAuditEvent["latencyMs"],
     outcome,
     failureCode,
+    failureDetail,
     occurredAt,
   };
 }

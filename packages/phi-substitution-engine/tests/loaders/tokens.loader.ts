@@ -537,18 +537,27 @@ async function runCase(
         dictionaryVersion: V1,
         token: tk,
       };
-      // Write under attempt A, then REPLAY under the SAME attempt with a DIVERGENT payload (a retry
-      // whose body differs): the replay MUST be a no-op — the first canonical stands.
+      // GLY-373 §3.2.5 AMENDMENT. Write under attempt A, then REPLAY under the SAME attempt with a
+      // DIVERGENT payload. The baseline treated this as a no-op keeping the first canonical; that
+      // is the §10.2 cross-value PHI disclosure — the SECOND value's reversal silently returned the
+      // FIRST value's data. A divergent payload under one attempt is not a replay at all, it is two
+      // different values competing for one token, and it MUST now FAIL CLOSED. MUT-35 restores the
+      // keep-first behaviour and must go RED here.
       store.record({
         ...writeBase,
         canonical: firstCanonical,
         attemptId: attemptA,
       });
-      store.record({
-        ...writeBase,
-        canonical: divergentCanonical,
-        attemptId: attemptA,
-      });
+      let divergentRejected = false;
+      try {
+        store.record({
+          ...writeBase,
+          canonical: divergentCanonical,
+          attemptId: attemptA,
+        });
+      } catch {
+        divergentRejected = true;
+      }
       const afterReplay = await store.resolveEncounteredTokens({
         tenantId: TENANT,
         matterId: MATTER,
@@ -574,6 +583,8 @@ async function runCase(
           distinctMappings: afterReplay.size,
           replayHeldFirstCanonical: afterReplay.get(tk) === firstCanonical,
           divergentReplayIgnored: afterReplay.get(tk) !== divergentCanonical,
+          // GLY-373 §3.2.5: the divergent same-attempt replay is REJECTED, not silently ignored.
+          divergentReplayRejected: divergentRejected,
           differentAttemptUpdated: afterUpdate.get(tk) === updatedCanonical,
         },
       };
